@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: MIT
-
 //! CLI Integration Tests
 
 #[cfg(test)]
@@ -334,7 +333,7 @@ mod cli_integ_tests {
 
     /// Check the integrity of a key file at 'key_path' using the CLI.
     fn cli_check_key(key_path: &Path, password: &str) {
-        let cmd = format!("{} key check -k {}", CLI_PATH, key_path.display());
+        let cmd = format!("{} key info -c -k {}", CLI_PATH, key_path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session.exp_string("enter key password:").unwrap();
@@ -820,7 +819,7 @@ mod cli_integ_tests {
     /// Negative test of key file not found.
     #[test]
     fn err_check_key_file_not_found() {
-        let cmd = format!("{} key check -k /bad/path/1/2/3", CLI_PATH,);
+        let cmd = format!("{} key info -k /bad/path/1/2/3", CLI_PATH,);
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session
             .exp_string("error: key file could not be found")
