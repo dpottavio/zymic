@@ -90,13 +90,13 @@ decryption to fail.
 The table below is a binary specification of a Frame. All integers are
 unsigned and interpreted in little-endian format.
 
-    Offset    |       Field      |      Bytes      | AAD  | Nonce
---------------|------------------|-----------------|------|------
-      0       | Sequence Number  |       4         |      |  ✅
-      4       | Invocation Count |       8         |      |  ✅
-     12       | End Length       |       4         |  ✅  |
-     16       | Payload          |  <conditional>  |      |
-<conditional> | Tag              |   <algorithm>   |      |
+|    Offset     |       Field      |      Bytes      | AAD  | Nonce |
+|---------------|------------------|-----------------|------|-------|
+|      0        | Sequence Number  |       4         |      |  ✅   |
+|      4        | Invocation Count |       8         |      |  ✅   |
+|     12        | End Length       |       4         |  ✅  |       |
+|     16        | Payload          |  (conditional)  |      |       |
+| (conditional) | Tag              |   (algorithm)   |      |       |
 
 ### Sequence Number
 An unsigned integer used to specify the order of a Stream. The decoder
@@ -193,16 +193,16 @@ The Header contains the necessary metadata to derive the Data Key for
 a given Stream. Below is a binary specification of the Header. All
 integers are unsigned and interpreted in little-endian format.
 
- Offset |    Field      |  Bytes
---------|---------------|--------
-    0   | Magic Number  |      4
-    4   | Version       |      1
-    5   | Algorithm     |      2
-    7   | Frame Length  |      1
-    8   | Reserved      |      8
-   16   | Nonce         |     16
-   32   | Parent Key ID |     16
-   48   | MAC           |     32
+| Offset |    Field      |  Bytes |
+|--------|---------------|--------|
+|    0   | Magic Number  |      4 |
+|    4   | Version       |      1 |
+|    5   | Algorithm     |      2 |
+|    7   | Frame Length  |      1 |
+|    8   | Reserved      |      8 |
+|   16   | Nonce         |     16 |
+|   32   | Parent Key ID |     16 |
+|   48   | MAC           |     32 |
 
 ### Magic Number
 A file signature with the value `0x6d797a2e` (ASCII for ".zym"). This
@@ -232,13 +232,13 @@ Frame Length = 2^N (bytes)
 
 Below is a table of supported Frame Lengths:
 
-Frame Length | Byte Length
--------------|-------------
-      12     |     4096
-      13     |     8192
-      14     |    16384
-      15     |    32768
-      16     |    65536
+| Frame Length | Byte Length |
+|--------------|-------------|
+|       12     |     4096    |
+|       13     |     8192    |
+|       14     |    16384    |
+|       15     |    32768    |
+|       16     |    65536    |
 
 ### Reserved
 Unused section that should be set to 0. Reserved for future protocol
@@ -544,11 +544,11 @@ An integer preset identifier representing the Argon2id
 configuration. The presets map to the memory (M), parallelism (P), and
 iteration (T) parameters as follows:
 
-Setting Value |  M   | P | T |       Description       |
---------------|------|---|---|-------------------------|
-   1          | 2^16 | 4 | 3 | CPU-intensive           |
-   2          | 2^18 | 4 | 1 | Memory-intensive        |
-   3          |  8   | 1 | 1 | Insecure (for testing)  |
+| Setting Value |  M   | P | T |       Description       |
+|---------------|------|---|---|-------------------------|
+|   1           | 2^16 | 4 | 3 | CPU-intensive           |
+|   2           | 2^18 | 4 | 1 | Memory-intensive        |
+|   3           |  8   | 1 | 1 | Insecure (for testing)  |
 
 Note: Setting 3 is for development or testing only and must not be
 used in production environments.
