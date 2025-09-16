@@ -1,0 +1,58 @@
+[package]
+name = "zymic_cli"
+version = "0.1.0"
+edition = "2021"
+description = """
+Encrypt and decrypt files using the Zymic format.
+"""
+license = "MIT"
+keywords = ["encryption","cli"]
+categories = ["cryptography"]
+repository = "https://github.com/dpottavio/zymic"
+readme = "README.md"
+build = "build.rs"
+
+[dependencies]
+aes-kw = "0.2"
+argon2 = { version = "0.5", default-features = false}
+base64 = { version = "0.22", features = ["alloc"],  default-features = false}
+chrono = {version = "0.4", features = ["alloc"], default-features = false}
+clap = { version = "4.4", features = ["derive"] }
+dirs = "6.0"
+indoc = "2.0"
+rpassword = { version = "7.3", default-features = false}
+serde = { version = "1.0", features = ["derive"], default-features = false }
+serde_json = {version = "1.0", features = ["alloc", "std"], default-features = false}
+serde_repr = {version = "0.1", default-features = false}
+zymic_core = {version = "0.1", path = "../core", features = ["os_rng", "std", "serde"], default-features = false }
+
+[dev-dependencies]
+rexpect = "0.6.0"
+postcard = {version = "1.0.0", features = ["use-std"]}
+
+[[bin]]
+name = "zymic"
+path = "src/main.rs"
+
+[package.metadata.deb]
+maintainer = "Daniel Ottavio <dpottavio@protonmail.com>"
+license-file = ["../LICENSE", "0"]
+section = "utils"
+priority = "optional"
+extended-description = "Encrypt and decrypt files using the Zymic format."
+depends = ""
+revision = ""
+
+assets = [
+  # Binary → /usr/bin
+  ["target/dist/zymic-cli-x86_64-linux/zymic", "usr/bin/", "755"],
+
+  # Man pages → /usr/share/man/man1
+  ["target/dist/zymic-cli-x86_64-linux/man/*.1.gz", "usr/share/man/man1/", "644"],
+
+  # Shell completions
+  ["target/dist/zymic-cli-x86_64-linux/completions/zymic.bash", "usr/share/bash-completion/completions/", "644"],
+  ["target/dist/zymic-cli-x86_64-linux/completions/_zymic",     "usr/share/zsh/site-functions/",          "644"],
+  ["target/dist/zymic-cli-x86_64-linux/completions/zymic.fish", "usr/share/fish/vendor_completions.d/",   "644"],
+  ["target/dist/zymic-cli-x86_64-linux/completions/zymic.elv",  "usr/share/elvish/lib/",                  "644"],
+]

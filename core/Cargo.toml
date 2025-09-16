@@ -1,0 +1,42 @@
+[package]
+name = "zymic_core"
+version = "0.1.0"
+edition = "2021"
+description = """
+Core library providing the primitives and streaming APIs for the Zymic
+authenticated encryption format.
+"""
+license = "MIT"
+keywords = ["encryption","cli"]
+categories = ["cryptography"]
+repository = "https://github.com/dpottavio/zymic"
+readme = "README.md"
+
+[dependencies]
+aes-gcm = {version = "0.10", features = ["alloc", "aes"], default-features = false}
+hkdf = { version = "0.12", default-features = false}
+rand_core = { version = "0.9", default-features = false, optional = true}
+serde = { version = "1.0", features = ["derive"], default-features = false, optional = true }
+sha2 = {version = "0.10", default-features = false}
+zeroize = {version = "1.8", default-features = false, optional = true}
+
+[package.metadata.docs.rs]
+all-features = true
+rustdoc-args = ["--cfg", "docsrs"]
+
+[features]
+default = ["std", "zeroize"]
+
+os_rng = ["dep:rand_core", "rand_core/os_rng"]
+rand_core = ["dep:rand_core"]
+serde = ["dep:serde"]
+std = []
+zeroize = ["dep:zeroize", "aes-gcm/zeroize"]
+
+
+[dev-dependencies]
+criterion = { version = "0.4"}
+
+[[bench]]
+name = "stream_bench"
+harness = false

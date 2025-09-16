@@ -1,0 +1,13 @@
+[package]
+name = "xtask"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+clap = { version = "4.4", features = ["derive"] }
+clap_complete = "4.5"
+clap_mangen = "0.2"
+flate2 = "1.1"
+sha2 = {version = "0.10"}
+tar = "0.4"
+zymic_cli = {version = "0.1", path = "../cli"}
