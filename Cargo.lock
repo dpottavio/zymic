@@ -1701,7 +1701,7 @@ checksum = "ced3678a2879b30306d323f4542626697a464a97c0a07c9aebf7ebca65cd4dde"
 
 [[package]]
 name = "zymic_cli"
-version = "0.1.1"
+version = "0.1.2"
 dependencies = [
  "aes-kw",
  "argon2",
@@ -1716,20 +1716,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "zymic_core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
-]
-
-[[package]]
-name = "zymic_core"
-version = "0.1.0"
-dependencies = [
- "aes-gcm",
- "criterion",
- "hkdf",
- "rand_core",
- "serde",
- "sha2",
- "zeroize",
+ "zymic_core 0.1.0",
 ]
 
 [[package]]
@@ -1743,4 +1730,17 @@ dependencies = [
  "rand_core",
  "serde",
  "sha2",
+]
+
+[[package]]
+name = "zymic_core"
+version = "0.1.1"
+dependencies = [
+ "aes-gcm",
+ "criterion",
+ "hkdf",
+ "rand_core",
+ "serde",
+ "sha2",
+ "zeroize",
 ]
