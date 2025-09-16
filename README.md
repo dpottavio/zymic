@@ -6,6 +6,11 @@ Data) to provide both confidentiality and integrity. The format is
 [openly specified](./DESIGN.md), with a reference implementation in
 Rust.
 
+[![mit-badge][mit-badge]][mit-url]
+
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: https://github.com/dpottavio/zymic/blob/main/LICENSE
+
 This repro contains the following Rust crates:
 
 - `zymic_core` — the core library with the `ZymicStream`

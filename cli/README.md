@@ -1,5 +1,16 @@
 # Zymic CLI
 
+[![crates-badge][crates-badge]][crates-url]
+[![docs-badge][docs-badge]][docs-url]
+[![mit-badge][mit-badge]][mit-url]
+
+[crates-badge]: https://img.shields.io/crates/v/zymic_cli
+[crates-url]: https://crates.io/crates/zymic_cli
+[docs-badge]: https://docs.rs/zymic_cli/badge.svg
+[docs-url]: https://docs.rs/zymic_cli
+[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
+[mit-url]: https://github.com/dpottavio/zymic/blob/main/LICENSE
+
 Encrypt and decrypt files using the Zymic format.
 
 `zymic` is a command-line tool for encrypting data with a
