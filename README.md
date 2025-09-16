@@ -19,7 +19,7 @@ This repro contains the following Rust crates:
   encryption.
 
 - `zymic_cli` — a command-line wrapper around `zymic_core` for easy
-  file and stream encryption on the shell.
+  file and stream encryption in a shell.
 
 ## Getting started
 
