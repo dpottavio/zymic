@@ -1,6 +1,6 @@
 [package]
 name = "zymic_core"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2021"
 description = """
 Core library providing the primitives and streaming APIs for the Zymic
