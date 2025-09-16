@@ -1716,7 +1716,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_repr",
- "zymic_core",
+ "zymic_core 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -1730,4 +1730,17 @@ dependencies = [
  "serde",
  "sha2",
  "zeroize",
+]
+
+[[package]]
+name = "zymic_core"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "514b3cf6f806952801d9103ac7350b7fad9552137372d0e53177bbd887c3a66f"
+dependencies = [
+ "aes-gcm",
+ "hkdf",
+ "rand_core",
+ "serde",
+ "sha2",
 ]

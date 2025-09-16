@@ -24,7 +24,7 @@ rpassword = { version = "7.3", default-features = false}
 serde = { version = "1.0", features = ["derive"], default-features = false }
 serde_json = {version = "1.0", features = ["alloc", "std"], default-features = false}
 serde_repr = {version = "0.1", default-features = false}
-zymic_core = {version = "0.1", path = "../core", features = ["os_rng", "std", "serde"], default-features = false }
+zymic_core = {version = "0.1", features = ["os_rng", "std", "serde"], default-features = false }
 
 [dev-dependencies]
 rexpect = "0.6.0"
