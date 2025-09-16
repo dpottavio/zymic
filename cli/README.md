@@ -30,7 +30,7 @@ files, first package them into a single archive (e.g., `tar`, `zip`).
 
 2. Install the `zymic` cli:
 ```bash
-cargo install --locked zymic_cli
+cargo install zymic_cli
 ```
 
 Cargo places binaries in your user bin dir:
