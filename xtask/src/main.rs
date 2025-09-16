@@ -25,6 +25,8 @@ struct XTaskCli {
 enum Cmd {
     /// Build zymic CLI distribution artifact.
     Dist(DistArgs),
+    /// Run all tests and checks necessary to push commits.
+    PreCommit,
 }
 
 #[derive(Args)]
@@ -433,6 +435,28 @@ where
     Ok(())
 }
 
+/// Run all tests to validate crates before commiting to repo.
+fn precommit() -> io::Result<()> {
+    let test_args = [
+        vec!["fmt", "--check"],
+        vec!["clippy"],
+        vec!["test"],
+        vec!["hack", "test", "--no-run", "--feature-powerset"],
+    ];
+    for args in test_args {
+        let status = process::Command::new("cargo")
+            .args(args)
+            .stdout(process::Stdio::inherit())
+            .stderr(process::Stdio::inherit())
+            .status()?;
+        if !status.success() {
+            return Err(io::Error::other("cargo fmt failure"));
+        }
+    }
+
+    Ok(())
+}
+
 fn main() -> io::Result<()> {
     let args = XTaskCli::parse();
 
@@ -443,5 +467,6 @@ fn main() -> io::Result<()> {
             dist.build_tarball()?;
             dist.build_deb()
         }
+        Cmd::PreCommit => precommit(),
     }
 }
