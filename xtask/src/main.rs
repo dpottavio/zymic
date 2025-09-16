@@ -340,7 +340,9 @@ impl DistTarget {
 /// `command`.
 ///
 /// The output man pages have the following name pattern:
-/// <command>-<sub_command>.1.gz
+///```text
+///<command>-<sub_command>.1.gz
+///```
 fn build_man(
     command: &Command,
     parent_cmd_stack: &mut Vec<Command>,
