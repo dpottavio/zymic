@@ -13,7 +13,7 @@ files, first package them into a single archive (e.g., `tar`, `zip`).
 
 ## Install
 
-### From Source (Linux/macOS/Windows) 
+### From Source (Linux/macOS/Windows)
 
 1. [Install Rust](https://www.rust-lang.org/learn/get-started).
 
@@ -238,5 +238,8 @@ zymic dec -o - src.tar.zym | tar xf -
 
 ## License
 
-Licensed under the MIT License. See
-[LICENSE](https://opensource.org/license/MIT).
+All code and documentation in this repository is licensed under the
+[MIT License](https://opensource.org/license/MIT).
+
+You are free to use, modify, and distribute this project in accordance
+with the terms of that license.

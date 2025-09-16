@@ -21,5 +21,8 @@ and `no_std` environments.
 
 ## License
 
-Licensed under the MIT License. See
-[LICENSE](https://opensource.org/license/MIT).
+All code and documentation in this repository is licensed under the
+[MIT License](https://opensource.org/license/MIT).
+
+You are free to use, modify, and distribute this project in accordance
+with the terms of that license.
