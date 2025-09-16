@@ -24,8 +24,8 @@ This repro contains the following Rust crates:
 ## Getting started
 
 - Design: see [`DESIGN.md`](./DESIGN.md).
-- Library users: see [`zymic_core`](./zymic_core/README.md).
-- CLI users: see [`zymic_cli`](./zymic_cli/README.md).
+- Library users: see [`zymic_core`](./core/README.md).
+- CLI users: see [`zymic_cli`](./cli/README.md).
 
 ## License
 
