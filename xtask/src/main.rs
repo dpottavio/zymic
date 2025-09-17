@@ -302,6 +302,13 @@ impl Distribution {
     fn build_deb(&self) -> io::Result<()> {
         let output_dir = format!("{}", self.root_path.display());
 
+        // Hack: cargo_deb package requires the target directory to be
+        // in the cli directory. Create a symlink to satisfy this.
+        let target_link = Path::new("cli/target");
+        if !target_link.exists() {
+            unix::fs::symlink("../target", target_link)?;
+        }
+
         // cargo deb --release -p zymic_cli -o <root dir>
         let status = process::Command::new("cargo")
             .arg("deb")
@@ -315,6 +322,8 @@ impl Distribution {
         if !status.success() {
             return Err(io::Error::other("cargo build failure"));
         }
+
+        fs::remove_file(target_link)?;
 
         Ok(())
     }
