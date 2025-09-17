@@ -1,9 +1,10 @@
+use cargo_metadata::MetadataCommand;
 use clap::{Args, Command, CommandFactory, Parser, Subcommand, ValueEnum};
 use clap_complete::Shell;
 use flate2::{Compression, GzBuilder};
 use sha2::{Digest, Sha256};
 use std::{
-    fmt, fs,
+    env, fmt, fs,
     fs::File,
     io,
     io::{BufReader, BufWriter, Write},
@@ -459,6 +460,14 @@ fn precommit() -> io::Result<()> {
 
 fn main() -> io::Result<()> {
     let args = XTaskCli::parse();
+
+    let metadata = MetadataCommand::new()
+        .no_deps()
+        .exec()
+        .expect("Could not fetch cargo metadata");
+    let ws_root = metadata.workspace_root;
+    // Change process working dir to root workspace
+    env::set_current_dir(&ws_root)?;
 
     match args.cmd {
         Cmd::Dist(args) => {
