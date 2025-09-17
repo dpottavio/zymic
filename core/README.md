@@ -26,8 +26,8 @@ and `no_std` environments.
 - **`serde`**: Adds `serde` serialization support for the `ByteArray`
   type.
 
-- **`os_rng`**: Enables RNG-agnostic constructors for `ByteArray`
-  (`try_from_crypto_rand``), requiring `rand::TryCryptoRng +
+- **`os_rng`**: Enables an RNG-agnostic constructor for `ByteArray`
+  (`try_from_crypto_rand`), requiring `rand::TryCryptoRng +
   rand::TryRngCore`.
 
 ## License
