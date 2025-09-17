@@ -302,16 +302,16 @@ impl Distribution {
         let output_dir = format!("{}", self.root_path.display());
 
         // cargo deb --release -p zymic_cli -o <root dir>
-        let out = process::Command::new("cargo")
+        let status = process::Command::new("cargo")
             .arg("deb")
             .arg("-p")
             .arg("zymic_cli")
             .arg("-o")
             .arg(output_dir)
-            .output()?;
-        io::stdout().write_all(&out.stdout)?;
-        io::stderr().write_all(&out.stderr)?;
-        if !out.status.success() {
+            .stdout(process::Stdio::inherit())
+            .stderr(process::Stdio::inherit())
+            .status()?;
+        if !status.success() {
             return Err(io::Error::other("cargo build failure"));
         }
 
@@ -391,17 +391,17 @@ fn build_release(target: DistTarget) -> io::Result<PathBuf> {
     let target_name = target.name();
 
     // cargo build --release -p zymic_cli --target <target>
-    let out = process::Command::new("cargo")
+    let status = process::Command::new("cargo")
         .arg("build")
         .arg("--release")
         .arg("-p")
         .arg("zymic_cli")
         .arg("--target")
         .arg(target_name)
-        .output()?;
-    io::stdout().write_all(&out.stdout)?;
-    io::stderr().write_all(&out.stderr)?;
-    if !out.status.success() {
+        .stdout(process::Stdio::inherit())
+        .stderr(process::Stdio::inherit())
+        .status()?;
+    if !status.success() {
         return Err(io::Error::other("cargo build failure"));
     }
     let bin_path = Path::new("target").join(target_name).join("release/zymic");
