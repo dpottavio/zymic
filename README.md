@@ -1,31 +1,27 @@
 # Zymic
 
-Zymic is an authenticated, streaming encryption format for securing
+Zymic is a streaming authenticated encryption format for securing
 data at rest.  It uses AEAD (Authenticated Encryption with Associated
 Data) to provide both confidentiality and integrity. The format is
 [openly specified](./DESIGN.md), with a reference implementation in
 Rust.
 
-[![mit-badge][mit-badge]][mit-url]
-
-[mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
-[mit-url]: https://github.com/dpottavio/zymic/blob/main/LICENSE
-
 This repro contains the following Rust crates:
 
-- `zymic_core` — the core library with the `ZymicStream`
-  implementation and low-level primitives for encrypting/decrypting
-  data in the Zymic frame format using authenticated symmetric
-  encryption.
+| Crate Name | crates.io | Rust Docs | Description
+|------------|-----------|-----------|------------|
+| [zymic_cli](./cli/README.md)  |  [![cli-crates-badge][cli-crates-badge]][cli-crates-url] | [![cli-docs-badge][cli-docs-badge]][cli-docs-url] | CLI for encrypting files | 
+| [zymic_core](./core/README.md)  |  [![core-crates-badge][core-crates-badge]][core-crates-url] | [![core-docs-badge][core-docs-badge]][core-docs-url] | Core library | 
 
-- `zymic_cli` — a command-line wrapper around `zymic_core` for easy
-  file and stream encryption in a shell.
+[cli-crates-badge]: https://img.shields.io/crates/v/zymic_cli
+[cli-crates-url]: https://crates.io/crates/zymic_cli
+[cli-docs-badge]: https://docs.rs/zymic_cli/badge.svg
+[cli-docs-url]: https://docs.rs/zymic_cli
 
-## Getting started
-
-- Design: see [`DESIGN.md`](./DESIGN.md).
-- Library users: see [`zymic_core`](./core/README.md).
-- CLI users: see [`zymic_cli`](./cli/README.md).
+[core-crates-badge]: https://img.shields.io/crates/v/zymic_core
+[core-crates-url]: https://crates.io/crates/zymic_core
+[core-docs-badge]: https://docs.rs/zymic_core/badge.svg
+[core-docs-url]: https://docs.rs/zymic_core
 
 ## License
 
