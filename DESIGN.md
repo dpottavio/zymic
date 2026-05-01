@@ -73,11 +73,16 @@ A Stream consists of zero or more Body Frames followed by exactly one
 End Frame. If the End Frame is missing, the Stream is considered
 truncated and invalid.
 
+Truncation can only be detected by authenticating Frames through the
+terminal End Frame. Successfully decrypting a prefix of the Stream
+proves the integrity of only that prefix; it does not prove that the
+stored Stream is complete.
+
 Each Frame is assigned a monotonically increasing sequence
 number. This number determines the correct ordering of Frames and is
-included as AAD during encryption. Any modification or reordering of
-sequence numbers results in an authenticity violation and will cause
-decryption to fail.
+included in the AEAD nonce during encryption. Any modification or
+reordering of sequence numbers results in an authenticity violation
+and will cause decryption to fail.
 
 ```
 <-------------------- Stream ----------------------->
@@ -103,6 +108,16 @@ An unsigned integer used to specify the order of a Stream. The decoder
 MUST verify that the observed Sequence Number is strictly increasing
 with no gaps; any reordering or omission invalidates the stream.
 
+Sequence Numbers are 32-bit values and MUST begin at `0` for the
+first Frame of a Stream. The encoder MUST increment the Sequence
+Number by exactly `1` for each subsequent Frame, including the End
+Frame.
+
+The Sequence Number forms part of the AEAD nonce and therefore MUST
+NOT wrap under the same Data Key. If the next Frame would require a
+Sequence Number of `2^32`, the encoder MUST fail and MUST NOT emit any
+additional Frames under that Data Key.
+
 ### Invocation Count
 An unsigned integer indicating how many times a Frame has been
 re-encrypted with the same Data Key. This value defaults to 0.
@@ -114,6 +129,18 @@ sequence number and the invocation count.
 
 This ensures nonce uniqueness even when the same Frame is encrypted
 multiple times with the same key.
+
+For a given `(Data Key, Sequence Number)` pair, the Invocation Count
+MUST increase monotonically from `0` and MUST NOT wrap. If
+re-encrypting a Frame would require an Invocation Count of `2^64`, the
+encoder MUST fail and MUST NOT reuse that `(Data Key, Sequence Number)`
+pair. To continue writing, the implementation MUST derive a fresh Data
+Key by starting a new Stream.
+
+The Invocation Count provides nonce uniqueness only. It does not
+provide freshness or anti-rollback protection. A previously valid
+Frame, or an entire previously valid Stream, may be replayed and still
+authenticate successfully if it was produced under the same Parent Key.
 
 ### End Length
 Specifies the length of the payload only if the Frame is an End
@@ -160,6 +187,22 @@ This design provides two primary security benefits:
   guarantees nonce uniqueness for a given Data Key. This property is
   essential for AEAD algorithms like AES-GCM, where nonce reuse under
   the same key breaks security.
+
+Nonce uniqueness depends on both the Sequence Number and Invocation
+Count never wrapping under the same Data Key. Implementations MUST
+treat both fields as exhaustion-limited counters and MUST fail before
+either counter would overflow.
+
+For Version 1 of this format, these limits imply:
+
+* A Stream can contain at most `2^32` total Frames, including the End
+  Frame.
+
+* A Stream can contain at most `2^32 - 1` Body Frames.
+
+* The maximum plaintext capacity of a Stream is `2^32 * (Frame Length -
+  32)` bytes, where `32` is the sum of Sequence Number, Invocation
+  Count, End Length, and Tag lengths.
 
 ```
 +------------+
@@ -348,7 +391,28 @@ algorithm to derive two values:
 
 2. MAC -- used to authenticate the Stream Header.
 
-The HDKF is invoked as follows:
+The Header fields are encoded exactly as follows before key
+derivation:
+
+```
+Header Metadata =
+    Magic Number  (4 bytes, little-endian) ||
+    Version       (1 byte)                 ||
+    Algorithm     (2 bytes, little-endian) ||
+    Frame Length  (1 byte)                 ||
+    Reserved      (8 bytes)                ||
+    Nonce         (16 bytes)               ||
+    Parent Key ID (16 bytes)
+
+Header =
+    Header Metadata ||
+    MAC             (32 bytes)
+```
+
+The MAC field is not included in either HKDF input. Only the 48-byte
+Header Metadata block participates in derivation.
+
+HKDF is invoked as follows:
 ```
 ikm = Parent Key Secret
 salt = Nonce || Parent Key ID
@@ -367,15 +431,42 @@ mac = expand_output[0..32]
 data_key = expand_output[32..64]:
 ```
 
+Equivalently, using the serialized Header Metadata defined above:
+
+```
+salt = Header Metadata[16..48]
+info = Header Metadata[0..16]
+```
+
 All Header fields used in Salt and Info must be in their raw
-binary (little-endian) representation when used in the HKDF input.
+binary representation exactly as serialized in the Header. Multi-byte
+integer fields MUST use little-endian encoding.
 
 **Validation Requirement**
 
 During decoding, the Header MAC must be recomputed by re-deriving it
 from the header fields using the same HKDF inputs and compared
-byte-for-byte against the stored value. Any mismatch indicates header
-tampering.
+in constant time against the stored value in the MAC field of the Header.
+Any mismatch indicates header tampering.
+
+The derived Data Key MUST NOT be used to decrypt any Frame unless the
+recomputed Header MAC matches the stored Header MAC.
+
+Note: in this construction, "Header MAC" refers specifically to the
+first 32 bytes of HKDF output defined above. It is not a separate
+standalone HMAC invocation over the Header.
+
+**Freshness and Rollback**
+
+This format authenticates integrity and key binding of a Stream, but it
+does not by itself authenticate recency. In particular, it does not
+prevent rollback attacks in which an attacker replaces the current
+stored Stream with an older, previously valid Stream derived from the
+same Parent Key.
+
+Applications that require rollback resistance MUST validate external,
+authenticated freshness metadata in addition to validating the Zymic
+Stream itself.
 
 **Parent Key Binding Enforcement**
 
@@ -428,6 +519,15 @@ chunks.
         * Increment by 1 if the Frame is re-encrypted with the same Data Key.
 
         * The value must be between 0 and 2^64.
+
+        * Before re-encrypting an existing Frame under the same Data Key,
+        the implementation MUST recover and authenticate the previous
+        Invocation Count for that `(Data Key, Sequence Number)` pair and
+        use a strictly larger value.
+
+        * If the previous Invocation Count is not available, the
+        implementation MUST NOT guess or reset it to 0. Instead, it MUST
+        derive a fresh Data Key by starting a new Stream.
 
     c. Encrypt the payload.
 
@@ -513,6 +613,23 @@ Header MAC.
       valid.
 
     * If no End Frame is found, the Stream is considered truncated.
+
+    * A decoder that is intended to validate the integrity of the
+      entire stored Stream MUST continue processing until it has
+      authenticated the End Frame.
+
+    * A decoder that stops after only a prefix of plaintext, or that
+      decrypts only a single Frame after seeking, authenticates only
+      the data it actually processed. Such a decoder MUST NOT treat a
+      successful partial decrypt as proof that the full Stream is
+      present or unmodified beyond the authenticated prefix.
+
+    * Even after successful validation of the complete Stream through
+      the End Frame, the result proves only that the Stream is
+      internally authentic under the Parent Key. It does not prove that
+      the Stream is the most recent version. Freshness and
+      anti-rollback checks, if required, MUST be enforced by external
+      authenticated metadata.
 
 ## Optional Parent Key Specification
 
