@@ -5,6 +5,8 @@ use crate::{
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use indoc::indoc;
+#[cfg(unix)]
+use std::os::unix::fs::OpenOptionsExt;
 use std::{
     env,
     ffi::OsStr,
@@ -258,12 +260,15 @@ fn set_key_permission(path: &PathBuf) -> Result<(), Error> {
 }
 
 fn create_file(out_path: &Path, force: bool) -> Result<fs::File, Error> {
-    let file = fs::OpenOptions::new()
+    let mut open_opts = fs::OpenOptions::new();
+    open_opts
         .write(true)
         .create(force) // --force, create if missing
         .truncate(force) // --force, overwrite if exists
-        .create_new(!force) // no force flag, fail if exists
-        .open(out_path)?;
+        .create_new(!force); // no force flag, fail if exists
+    #[cfg(unix)]
+    open_opts.mode(0o600);
+    let file = open_opts.open(out_path)?;
     Ok(file)
 }
 
@@ -411,10 +416,7 @@ pub fn handle_input() -> Result<(), Error> {
                 if let Some(parent) = key_path.parent() {
                     fs::create_dir_all(parent)?;
                 }
-                let file = fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&key_path)?;
+                let file = create_file(&key_path, false)?;
                 serde_json::to_writer(file, &key_file)?;
                 set_key_permission(&key_path)?;
             }
@@ -453,6 +455,7 @@ pub fn handle_input() -> Result<(), Error> {
                     .truncate(true)
                     .open(&key_path)?;
                 serde_json::to_writer(file, &key)?;
+                set_key_permission(&key_path)?;
             }
         },
         Command::Enc(args) => {
