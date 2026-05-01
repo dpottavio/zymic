@@ -11,6 +11,7 @@ use std::{
     fmt, fs, io,
     path::{Path, PathBuf},
 };
+use zeroize::Zeroizing;
 use zymic_core::{
     key::{ParentKeyId, ParentKeySecret},
     stream::{Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream},
@@ -395,8 +396,9 @@ pub fn handle_input() -> Result<(), Error> {
                 }
                 println!("creating key: {}", key_path.display());
 
-                let password = rpassword::prompt_password(KEY_PASSWORD_PROMPT)?;
-                let password_chk = rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?;
+                let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
+                let password_chk =
+                    Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
                 if password != password_chk {
                     return Err(Error::new(ErrorKind::PasswordMismatch));
                 }
@@ -421,7 +423,7 @@ pub fn handle_input() -> Result<(), Error> {
                 let file = fs::OpenOptions::new().read(true).open(&key_path)?;
                 let key: KeyFile = serde_json::from_reader(file)?;
                 if args.check {
-                    let password = rpassword::prompt_password(KEY_PASSWORD_PROMPT)?;
+                    let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
                     let _ = key.unwrap(&password)?;
                 }
                 println!("path:\t{}\n{key}", key_path.display());
@@ -432,13 +434,15 @@ pub fn handle_input() -> Result<(), Error> {
 
                 let file = fs::OpenOptions::new().read(true).open(&key_path)?;
                 let mut key: KeyFile = serde_json::from_reader(file)?;
-                let old_password = rpassword::prompt_password(KEY_PASSWORD_PROMPT)?;
+                let old_password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
 
-                let new_password = rpassword::prompt_password(KEY_NEW_PASSWORD_PROMPT)?;
+                let new_password =
+                    Zeroizing::new(rpassword::prompt_password(KEY_NEW_PASSWORD_PROMPT)?);
                 if new_password == old_password {
                     return Err(Error::new(ErrorKind::PasswordNoChange));
                 }
-                let new_password_chk = rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?;
+                let new_password_chk =
+                    Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
                 if new_password != new_password_chk {
                     return Err(Error::new(ErrorKind::PasswordMismatch));
                 }
@@ -455,7 +459,7 @@ pub fn handle_input() -> Result<(), Error> {
             let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
             let file = fs::OpenOptions::new().read(true).open(&key_path)?;
             let key_file: KeyFile = serde_json::from_reader(file)?;
-            let password = rpassword::prompt_password(KEY_PASSWORD_PROMPT)?;
+            let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
             let parent_key = key_file.unwrap(&password)?;
 
             let mut io_args = enc_args_to_io(args.file, args.output, args.force)?;
@@ -475,7 +479,7 @@ pub fn handle_input() -> Result<(), Error> {
             let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
             let file = fs::OpenOptions::new().read(true).open(&key_path)?;
             let key_file: KeyFile = serde_json::from_reader(file)?;
-            let password = rpassword::prompt_password(KEY_PASSWORD_PROMPT)?;
+            let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
             let key = key_file.unwrap(&password)?;
 
             let mut io_args = dec_args_to_io(args.file, args.output, args.force)?;

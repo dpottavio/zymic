@@ -11,6 +11,7 @@ use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
 use serde_repr::{Deserialize_repr, Serialize_repr};
 use std::{fmt, time::SystemTime};
+use zeroize::{Zeroize, Zeroizing};
 use zymic_core::{
     bytes::ByteArray,
     key::{ParentKey, ParentKeyId, ParentKeySecret},
@@ -101,7 +102,7 @@ fn argon_hash(
     salt.extend_from_slice(&date.to_le_bytes());
 
     let params = setting.to_params();
-    let mut mem_blocks = vec![argon2::Block::default(); params.block_count()];
+    let mut mem_blocks = Zeroizing::new(vec![argon2::Block::default(); params.block_count()]);
     let mut out = ArgonHash::default();
     Argon2::new(argon2::Algorithm::Argon2id, argon2::Version::V0x13, params)
         .hash_password_into_with_memory(password.as_bytes(), &salt, &mut out, &mut mem_blocks)?;
@@ -203,9 +204,9 @@ impl KeyFile {
     /// Return a copy of the key unwrapped. Caller must provide a
     /// 'password' to unwrap the key.
     pub fn unwrap(&self, password: &str) -> Result<ParentKey, Error> {
-        let hash = argon_hash(self.argon, &self.id, self.date, password)?;
-
+        let mut hash = argon_hash(self.argon, &self.id, self.date, password)?;
         let kek = KekAes256::try_from(hash.as_slice())?;
+        hash.zeroize();
         let mut secret = ParentKeySecret::default();
         kek.unwrap(&self.wrapped_secret, &mut secret)?;
 
@@ -228,8 +229,9 @@ impl KeyFile {
         password: &str,
         secret: &ParentKeySecret,
     ) -> Result<WrappedSecret, Error> {
-        let hash = argon_hash(argon, id, date, password)?;
+        let mut hash = argon_hash(argon, id, date, password)?;
         let kek = KekAes256::try_from(hash.as_slice())?;
+        hash.zeroize();
         let mut wrapped_secret = WrappedSecret::default();
         kek.wrap(secret, &mut wrapped_secret)?;
 
