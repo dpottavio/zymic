@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod cli_integ_tests {
-    use rexpect::{process::wait::WaitStatus, session::spawn_command, spawn, spawn_bash};
+    use rexpect::{process::wait::WaitStatus, session::spawn_command, spawn};
 
     use std::{
         env, fs, io,
@@ -240,11 +240,12 @@ mod cli_integ_tests {
     /// environment.
     #[cfg(unix)]
     fn cli_crypt_bash(cmd: &str) {
-        let mut session = spawn_bash(Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.execute(cmd, "enter key password:").unwrap();
+        let mut command = Command::new("sh");
+        command.arg("-lc").arg(cmd);
+        let mut session = spawn_command(command, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
-        session.wait_for_prompt().unwrap();
-        session.send_control('d').unwrap();
+        session.exp_eof().unwrap();
         let status = session.process.exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
