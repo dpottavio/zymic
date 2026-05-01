@@ -18,6 +18,8 @@ use serde::{
     de::{SeqAccess, Visitor},
     Deserialize, Deserializer, Serialize, Serializer,
 };
+#[cfg(feature = "zeroize")]
+use zeroize::Zeroize;
 
 /// A convenience macro to create a `ByteArray<N>` from a literal
 /// array expression.
@@ -168,6 +170,13 @@ impl<const N: usize> AsRef<[u8]> for ByteArray<N> {
 impl<const N: usize> AsMut<[u8]> for ByteArray<N> {
     fn as_mut(&mut self) -> &mut [u8] {
         self.as_mut_slice()
+    }
+}
+
+#[cfg(feature = "zeroize")]
+impl<const N: usize> Zeroize for ByteArray<N> {
+    fn zeroize(&mut self) {
+        self.bytes.zeroize();
     }
 }
 
