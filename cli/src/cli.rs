@@ -23,6 +23,7 @@ use zymic_core::{
 #[derive(Parser)]
 #[command(
     name = "zymic",
+    display_name = env!("CARGO_PKG_NAME"),
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_DESCRIBE"), ")"),
     about = "Stream-oriented encryption CLI",
     after_help = indoc! {r#"
