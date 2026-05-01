@@ -555,6 +555,7 @@ impl TryFrom<u8> for FrameLength {
             13 => Ok(FrameLength::Len8KiB),
             14 => Ok(FrameLength::Len16KiB),
             15 => Ok(FrameLength::Len32KiB),
+            16 => Ok(FrameLength::Len64KiB),
             _ => Err(Error::new(ErrorKind::InvalidFrameLength(val))),
         }
     }
@@ -1951,6 +1952,17 @@ mod tests {
 
         let empty_data_key = aes_gcm::Key::<Aes256Gcm>::default();
         assert_ne!(empty_data_key, header.data_key);
+    }
+
+    /// Test the largest frame length supported by the design.
+    #[test]
+    fn header_max_frame_len() {
+        let parent_key = mock_parent_key();
+        let expected_header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+            .with_frame_len(FrameLength::Len64KiB)
+            .build();
+        let header = Header::from_bytes(&parent_key, expected_header.bytes().clone()).unwrap();
+        assert_eq!(expected_header, header);
     }
 
     /// Test allocating a Header instance from raw bytes.
