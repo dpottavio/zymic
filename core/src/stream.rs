@@ -63,6 +63,7 @@ use alloc::vec::Vec;
 use core::{fmt, ops::Range};
 use hkdf::Hkdf;
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 
 #[cfg(feature = "std")]
 use std::io::{Read, Seek, SeekFrom, Write};
@@ -1029,7 +1030,7 @@ impl Header {
 
         let (header_mac, data_key) = derive_data_key(parent_key, salt, info);
 
-        if header_mac.as_ref() != expected_mac {
+        if header_mac.as_ref().ct_eq(expected_mac).unwrap_u8() != 1 {
             return Err(Error::new(ErrorKind::Authentication));
         };
 
