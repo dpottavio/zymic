@@ -8,8 +8,6 @@
 //! It is suitable for at-rest encryption on disk and for sequential or random
 //! access to encrypted data.
 //!
-//! This crate may be used to encrypt data to be stored on disk.
-//!
 //! # Getting Started
 //!
 //! If you’re on `std`, start with the [`stream`] module and the
