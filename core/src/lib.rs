@@ -19,6 +19,16 @@
 //! [`stream`]: crate::stream
 //! [`ZymicStream`]: crate::stream::ZymicStream
 //! [`FrameBuf`]: crate::stream::FrameBuf
+//!
+//! # Stream Immutability
+//!
+//! **Warning:** Rewriting or mutating an existing stream is not
+//! recommended. Streams should be treated as immutable.
+//!
+//! Safe mutation requires external, authenticated anti-rollback
+//! countermeasures to prevent replay of older valid frames and
+//! invocation counts. This API does not provide those
+//! countermeasures. Write a new stream instead.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

@@ -44,6 +44,9 @@
 //! with the other. Choose the abstraction level that best fits your
 //! environment and I/O model.
 //!
+//! Streams should be treated as immutable. See the crate-level
+//! [stream immutability warning](crate#stream-immutability).
+//!
 //! [`ZymicStream`]: crate::stream::ZymicStream
 //! [`FrameBuf`]: crate::stream::FrameBuf
 use crate::{
@@ -304,6 +307,8 @@ pub struct FrameHeaderBuilder {
 /// Write plaintext into the payload with [`write_payload`]. When all
 /// data is written (or the buffer is full), call [`encrypt`] to
 /// encrypt the payload in place and append the authentication tag.
+/// Re-encrypting an existing frame is discouraged. See the crate-level
+/// [stream immutability warning](crate#stream-immutability).
 ///
 /// # Decryption
 ///
@@ -408,6 +413,8 @@ pub struct FrameBuf {
 ///
 /// The stream implements [`Read`], [`Write`], and [`Seek`] over a
 /// Zymic encoded inner type `T` when the `std` feature is enabled.
+/// Before writing to an existing stream, see the crate-level
+/// [stream immutability warning](crate#stream-immutability).
 ///
 /// # Usage
 ///
