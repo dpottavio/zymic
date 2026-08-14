@@ -1460,10 +1460,15 @@ impl<T: Read> Read for ZymicStream<T> {
 
         while !buf.is_empty() && !self.is_eof() {
             if self.frame_payload_remaining() == 0 && self.read_next_frame()? {
-                self.seq_num = self
-                    .seq_num
-                    .checked_add(1)
-                    .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+                // The End Frame consumes the current sequence number but
+                // does not require a subsequent one. This allows
+                // `u32::MAX` to be used by a valid terminal Frame.
+                if self.end_len.is_none() {
+                    self.seq_num = self
+                        .seq_num
+                        .checked_add(1)
+                        .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+                }
             }
             let remaining = self.frame_payload_remaining();
             if remaining == 0 {
@@ -1505,6 +1510,14 @@ impl<T: Write> Write for ZymicStream<T> {
 
         while !buf.is_empty() {
             if !self.frame_buf.has_payload_capacity() {
+                // A Body Frame must always leave a sequence number for
+                // the required End Frame. Check before encrypting or
+                // writing so that `u32::MAX` remains available as the
+                // terminal sequence number.
+                let next_seq_num = self
+                    .seq_num
+                    .checked_add(1)
+                    .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
                 self.frame_buf.encrypt(
                     &FrameHeaderBuilder::new(self.seq_num)
                         .invocation(self.invocation)
@@ -1512,10 +1525,7 @@ impl<T: Write> Write for ZymicStream<T> {
                 );
                 self.inner.write_all(self.frame_buf.as_ref())?;
                 self.frame_buf.clear();
-                self.seq_num = self
-                    .seq_num
-                    .checked_add(1)
-                    .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+                self.seq_num = next_seq_num;
                 self.invocation = 0;
                 self.payload_pos = 0;
             }
@@ -2563,6 +2573,68 @@ mod tests {
 
         validate_frame_bytes(&cipher_txt, &expected_frame_header);
         assert_ne!(plain_txt, cipher_txt);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn stream_max_seq_end() {
+        let parent_key = mock_parent_key();
+        let frame_len = FrameLength::Len4KiB;
+        let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+            .with_frame_len(frame_len)
+            .build();
+        let plain_txt = payload_from_frame_count(2, frame_len);
+        let start_seq_num = u32::MAX - 1;
+
+        let mut writer = ZymicStream::new_with_seq_num(Vec::new(), &header, start_seq_num);
+        writer.write_all(&plain_txt).unwrap();
+        writer.eof().unwrap();
+
+        let cipher_txt = writer.into_inner();
+        let mut frames = cipher_txt.chunks_exact(frame_len.as_usize());
+        validate_frame_bytes(
+            frames.next().unwrap(),
+            &FrameHeaderBuilder::new(start_seq_num).build(),
+        );
+        validate_frame_bytes(
+            frames.next().unwrap(),
+            &FrameHeaderBuilder::new(u32::MAX).end().build(),
+        );
+        assert!(frames.next().is_none());
+        assert!(frames.remainder().is_empty());
+
+        let mut reader =
+            ZymicStream::new_with_seq_num(Cursor::new(cipher_txt), &header, start_seq_num);
+        let mut decoded = Vec::new();
+        reader.read_to_end(&mut decoded).unwrap();
+        reader.is_eof_or_err().unwrap();
+        assert_eq!(decoded, plain_txt);
+    }
+
+    #[cfg(feature = "std")]
+    #[test]
+    fn stream_max_seq_body_err() {
+        let parent_key = mock_parent_key();
+        let frame_len = FrameLength::Len4KiB;
+        let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+            .with_frame_len(frame_len)
+            .build();
+        let plain_txt = payload_from_frame_count(1, frame_len);
+
+        let mut stream = ZymicStream::new_with_seq_num(Vec::new(), &header, u32::MAX);
+        stream.write_all(&plain_txt).unwrap();
+        assert!(stream.inner.is_empty());
+
+        let err = stream.write(&[0]).unwrap_err();
+        let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+        assert!(matches!(inner.kind(), ErrorKind::IntegerOverflow));
+        assert!(stream.inner.is_empty());
+
+        stream.eof().unwrap();
+        validate_frame_bytes(
+            &stream.into_inner(),
+            &FrameHeaderBuilder::new(u32::MAX).end().build(),
+        );
     }
 
     #[cfg(feature = "std")]
