@@ -55,11 +55,11 @@ use crate::{
     key::{ParentKey, ParentKeyId},
 };
 use aes_gcm::{
-    aead::{
-        generic_array::typenum::{Unsigned, U12},
-        AeadInPlace,
+    aead::AeadInOut,
+    aes::{
+        cipher::{consts::U12, typenum::Unsigned},
+        Aes256,
     },
-    aes::Aes256,
     AesGcm, KeyInit as AesKeyInit, Nonce as AesNonce, Tag,
 };
 use alloc::vec::Vec;
@@ -755,11 +755,12 @@ impl FrameBuf {
         let (nonce, frame) = self.buf.split_at_mut(FRAME_NONCE_LEN);
         let (eof_len, payload) = frame.split_at_mut(END_LEN);
 
-        let nonce = AesNonce::<FrameNonceLen>::from_slice(nonce);
+        let nonce =
+            AesNonce::<FrameNonceLen>::try_from(&nonce[..]).expect("nonce should be 12 bytes");
 
         let tag = self
             .cipher
-            .encrypt_in_place_detached(nonce, eof_len, &mut payload[..self.payload_len])
+            .encrypt_inout_detached(&nonce, eof_len, (&mut payload[..self.payload_len]).into())
             .expect("buffer of sufficient size");
 
         // Ensure that we can append the authentication tag after the
@@ -817,11 +818,12 @@ impl FrameBuf {
 
         let (payload, mac) = frame.split_at_mut(payload_len);
 
-        let tag = Tag::from_slice(&mac[..FRAME_TAG_LEN]);
-        let nonce = AesNonce::from_slice(nonce);
+        let tag = Tag::try_from(&mac[..FRAME_TAG_LEN]).expect("tag should be 16 bytes");
+        let nonce =
+            AesNonce::<FrameNonceLen>::try_from(&nonce[..]).expect("nonce should be 12 bytes");
 
         self.cipher
-            .decrypt_in_place_detached(nonce, eof_len_bytes, payload, tag)?;
+            .decrypt_inout_detached(&nonce, eof_len_bytes, payload.into(), &tag)?;
 
         let seq_num_decoded = u32::from_le_bytes(
             nonce[..SEQ_NUM_LEN]
