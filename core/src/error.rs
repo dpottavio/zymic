@@ -26,6 +26,8 @@ pub(crate) enum ErrorKind {
     #[cfg(feature = "rand_core")]
     Rng(String),
     #[cfg(feature = "std")]
+    StreamImmutable,
+    #[cfg(feature = "std")]
     Truncation,
     TryFromInt(core::num::TryFromIntError),
     #[cfg(feature = "std")]
@@ -62,6 +64,8 @@ impl fmt::Display for Error {
             ),
             #[cfg(feature = "rand_core")]
             ErrorKind::Rng(e) => write!(f, "failed to generate random data: {e}"),
+            #[cfg(feature = "std")]
+            ErrorKind::StreamImmutable => write!(f, "stream is immutable"),
             #[cfg(feature = "std")]
             ErrorKind::Truncation => write!(f, "data has been truncated"),
             ErrorKind::TryFromInt(e) => write!(f, "integer conversion failure: {e}"),

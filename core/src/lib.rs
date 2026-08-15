@@ -22,13 +22,9 @@
 //!
 //! # Stream Immutability
 //!
-//! **Warning:** Rewriting or mutating an existing stream is not
-//! recommended. Streams should be treated as immutable.
-//!
-//! Safe mutation requires external, authenticated anti-rollback
-//! countermeasures to prevent replay of older valid frames and
-//! invocation counts. This API does not provide those
-//! countermeasures. Write a new stream instead.
+//! Streams are immutable. Once encoded, a stream's Header and Frames
+//! must not be modified. Any change to the plaintext must be encoded
+//! as a new stream.
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 

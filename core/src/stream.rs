@@ -44,8 +44,8 @@
 //! with the other. Choose the abstraction level that best fits your
 //! environment and I/O model.
 //!
-//! Streams should be treated as immutable. See the crate-level
-//! [stream immutability warning](crate#stream-immutability).
+//! Streams are immutable. See the crate-level
+//! [stream immutability requirements](crate#stream-immutability).
 //!
 //! [`ZymicStream`]: crate::stream::ZymicStream
 //! [`FrameBuf`]: crate::stream::FrameBuf
@@ -56,10 +56,7 @@ use crate::{
 };
 use aes_gcm::{
     aead::AeadInOut,
-    aes::{
-        cipher::{consts::U12, typenum::Unsigned},
-        Aes256,
-    },
+    aes::{cipher::consts::U12, Aes256},
     AesGcm, KeyInit as AesKeyInit, Nonce as AesNonce, Tag,
 };
 use alloc::vec::Vec;
@@ -161,9 +158,6 @@ const HKDF_SALT_RANGE: Range<usize> =
 /// frame sequence number field length in bytes
 const SEQ_NUM_LEN: usize = 4;
 
-/// frame invocation field length in bytes
-const INVOCATION_LEN: usize = 8;
-
 /// frame End Length field length in bytes
 const END_LEN: usize = 4;
 
@@ -177,24 +171,20 @@ const END_LEN: usize = 4;
 const FRAME_TAG_LEN: usize = 16;
 
 /// Total length in bytes of all non-payload frame fields.
-const FRAME_META_LEN: usize = FRAME_TAG_LEN + SEQ_NUM_LEN + END_LEN + INVOCATION_LEN;
+const FRAME_META_LEN: usize = FRAME_TAG_LEN + SEQ_NUM_LEN + END_LEN;
 
-const FRAME_HEADER_LEN: usize = SEQ_NUM_LEN + END_LEN + INVOCATION_LEN;
+const FRAME_HEADER_LEN: usize = SEQ_NUM_LEN + END_LEN;
 
-/// Length of AEAD nonce in bytes
+/// AES-256-GCM nonce length.
 type FrameNonceLen = U12;
-const FRAME_NONCE_LEN: usize = FrameNonceLen::USIZE;
 
 // Frame field offsets.
 
 /// frame sequence number field offset
 const SEQ_NUM_OFFSET: usize = 0;
 
-/// frame invoation field offset
-const INVOCATION_OFFSET: usize = SEQ_NUM_OFFSET + SEQ_NUM_LEN;
-
 /// frame End Len field offset
-const END_LEN_OFFSET: usize = INVOCATION_OFFSET + INVOCATION_LEN;
+const END_LEN_OFFSET: usize = SEQ_NUM_OFFSET + SEQ_NUM_LEN;
 
 /// frame payload field offset
 const PAYLOAD_OFFSET: usize = END_LEN_OFFSET + END_LEN;
@@ -206,9 +196,9 @@ const DATA_KEY_LEN: usize = KEY_LEN_256;
 const MAGIC_NUM: u32 = 0x6d797a2e;
 
 /// current codec version
-const VERSION: u8 = 1;
+const VERSION: u8 = 2;
 
-// AES-256 GCM using SeqNum size nonce.
+// AES-256-GCM using a 12-byte nonce.
 type Aes256Gcm = AesGcm<Aes256, FrameNonceLen>;
 
 #[repr(u16)]
@@ -255,12 +245,11 @@ pub struct HeaderBuilder<'a> {
     frame_len: FrameLength,
 }
 
-/// A Frame header type that contains the sequence number, invocation
-/// number, and frame type for a given frame encoding.
+/// A Frame header type that contains the sequence number and frame
+/// type for a given frame encoding.
 #[derive(Default)]
 pub struct FrameHeader {
     seq_num: u32,
-    invocation: u64,
     is_end: bool,
 }
 
@@ -271,15 +260,13 @@ pub struct FrameHeader {
 ///```rust
 /// use zymic_core::stream::FrameHeaderBuilder;
 ///
-/// let header = FrameHeaderBuilder::new(0).invocation(1).end().build();
+/// let header = FrameHeaderBuilder::new(0).end().build();
 ///
 /// assert_eq!(header.seq_num(), 0);
-/// assert_eq!(header.invocation(), 1);
 /// assert!(header.is_end());
 ///```
 pub struct FrameHeaderBuilder {
     seq_num: u32,
-    invocation: u64,
     is_end: bool,
 }
 
@@ -294,8 +281,7 @@ pub struct FrameHeaderBuilder {
 ///
 /// The buffer stores three contiguous sections:
 ///
-/// 1. Frame header — frame metadata (sequence number, invocation,
-///    end length).
+/// 1. Frame header — frame metadata (sequence number and end length).
 ///
 /// 2. Payload — plaintext before [`encrypt`] / after
 ///    [`decrypt`]; ciphertext after [`encrypt`].
@@ -307,8 +293,8 @@ pub struct FrameHeaderBuilder {
 /// Write plaintext into the payload with [`write_payload`]. When all
 /// data is written (or the buffer is full), call [`encrypt`] to
 /// encrypt the payload in place and append the authentication tag.
-/// Re-encrypting an existing frame is discouraged. See the crate-level
-/// [stream immutability warning](crate#stream-immutability).
+/// An existing frame must not be re-encrypted. See the crate-level
+/// [stream immutability requirements](crate#stream-immutability).
 ///
 /// # Decryption
 ///
@@ -413,8 +399,10 @@ pub struct FrameBuf {
 ///
 /// The stream implements [`Read`], [`Write`], and [`Seek`] over a
 /// Zymic encoded inner type `T` when the `std` feature is enabled.
-/// Before writing to an existing stream, see the crate-level
-/// [stream immutability warning](crate#stream-immutability).
+/// Writes are supported only while encoding a new Stream. Once the
+/// Stream has been finalized or an existing Frame has been read,
+/// further writes fail because Streams are immutable. See the
+/// crate-level [stream immutability requirements](crate#stream-immutability).
 ///
 /// # Usage
 ///
@@ -510,11 +498,11 @@ pub struct ZymicStream<T> {
     /// May be greater than zero if the stream starts reading from
     /// beyond the first frame.
     start_seq_num: u32,
-    /// Invocation counter for the current frame.
+    /// Whether this instance may still encode a new stream.
     ///
-    /// Incremented each time the same frame is encrypted with the
-    /// same data key, ensuring nonce uniqueness.
-    invocation: u64,
+    /// Reading an existing Frame or emitting the End Frame makes the
+    /// stream immutable and permanently disables further writes.
+    can_write: bool,
     /// Current byte position in the payload section.
     ///
     /// Updated on each read or write to track the next payload offset.
@@ -552,6 +540,15 @@ fn derive_data_key(
     data_key.copy_from_slice(&hkdf_out[HeaderMac::LEN..]);
 
     (digest, data_key)
+}
+
+/// Construct an algorithm-sized AEAD nonce from a Frame Sequence
+/// Number. The Sequence Number is encoded as an unsigned
+/// little-endian integer and zero-extended to the nonce width.
+fn frame_nonce(seq_num: u32) -> AesNonce<FrameNonceLen> {
+    let mut nonce = AesNonce::<FrameNonceLen>::default();
+    nonce[..SEQ_NUM_LEN].copy_from_slice(&seq_num.to_le_bytes());
+    nonce
 }
 
 impl TryFrom<u8> for FrameLength {
@@ -638,18 +635,18 @@ impl FrameBuf {
     /// section.
     ///
     ///```text
-    ///                    Buffer Length
-    ///  <----------------------------------------------->
-    ///                                        Payload       Payload
-    ///            Frame Header                Length        Capacity
-    ///  <-------------------------------> <-------------> <-------->
+    ///                  Buffer Length
+    /// <---------------------------------------------->
+    ///                           Payload      Payload
+    ///      Frame Header         Length       Capacity
+    /// <-------------------> <-------------> <-------->
     ///
-    /// +----------+------------+---------+---------------+----------+
-    /// | Seq. Num | Invocation | End Len |    Payload    |  (free)  |
-    /// +----------+------------+---------+---------------+----------+
-    ///                                   ^
-    ///                                   |
-    ///             payload_off: 0 -------+
+    /// +----------+---------+---------------+----------+
+    /// | Seq. Num | End Len |    Payload    |  (free)  |
+    /// +----------+---------+---------------+----------+
+    ///                      ^
+    ///                      |
+    /// payload_off: 0 ------+
     ///```
     ///
     /// # Errors
@@ -709,25 +706,30 @@ impl FrameBuf {
         self.max_payload_len - self.payload_len
     }
 
-    /// Encrypt the frame in place and return its header.
+    /// Encrypt the frame in place.
     ///
     /// The payload and metadata in this buffer are encrypted using the
     /// supplied [`FrameHeader`], and the buffer is updated to contain
     /// the ciphertext and authentication tag.
     ///
-    /// The diagram below illistrates the binary layout of the buffer
+    /// This low-level API does not track nonce use. The caller MUST
+    /// encrypt at most one Frame for each Sequence Number under a
+    /// given Header's Data Key. Changing an encrypted Frame requires a
+    /// new Stream Header and Data Key.
+    ///
+    /// The diagram below illustrates the binary layout of the buffer
     /// after [`encrypt`] is called.
     ///
     ///```text
-    ///                       Buffer Length
-    ///  <---------------------------------------------------------->
+    ///                   Buffer Length
+    ///  <----------------------------------------------->
     ///                                        Payload
     ///            Frame Header                Length
     ///  <-------------------------------> <------------->
     ///
-    /// +----------+------------+---------+---------------+-----------+
-    /// | Seq. Num | Invocation | End Len |    Payload    |  Auth Tag |
-    /// +----------+------------+---------+---------------+-----------+
+    /// +----------+---------+---------------+-----------+
+    /// | Seq. Num | End Len |    Payload    |  Auth Tag |
+    /// +----------+---------+---------------+-----------+
     ///```
     /// [`encrypt`]: Self::encrypt
     /// [`FrameHeader`]: crate::stream::FrameHeader
@@ -740,9 +742,6 @@ impl FrameBuf {
         let seq_num_bytes = frame_header.seq_num().to_le_bytes();
         self.set_bytes(seq_num_bytes.as_slice(), SEQ_NUM_OFFSET);
 
-        let invocation_bytes = frame_header.invocation().to_le_bytes();
-        self.set_bytes(invocation_bytes.as_slice(), INVOCATION_OFFSET);
-
         let eof_len_bytes = if frame_header.is_end() {
             u32::try_from(self.payload_len)
                 .expect("payload len should be 4 bytes")
@@ -752,11 +751,9 @@ impl FrameBuf {
         };
         self.set_bytes(eof_len_bytes.as_slice(), END_LEN_OFFSET);
 
-        let (nonce, frame) = self.buf.split_at_mut(FRAME_NONCE_LEN);
-        let (eof_len, payload) = frame.split_at_mut(END_LEN);
-
-        let nonce =
-            AesNonce::<FrameNonceLen>::try_from(&nonce[..]).expect("nonce should be 12 bytes");
+        let nonce = frame_nonce(frame_header.seq_num());
+        let (frame_header, payload) = self.buf.split_at_mut(FRAME_HEADER_LEN);
+        let eof_len = &frame_header[END_LEN_OFFSET..PAYLOAD_OFFSET];
 
         let tag = self
             .cipher
@@ -777,8 +774,8 @@ impl FrameBuf {
     /// This method returns an [`Error`] if:
     ///
     /// * The buffer is too short to contain the required frame
-    ///   fields.  At minimum, the sequence number, invocation, end
-    ///   length, and tag must be present.
+    ///   fields. At minimum, the sequence number, end length, and tag
+    ///   must be present.
     ///
     /// * The supplied `seq_num` does not match the sequence number
     ///   recovered and authenticated from the frame. This indicates
@@ -795,8 +792,11 @@ impl FrameBuf {
         if self.buf.len() < FRAME_META_LEN {
             return Err(Error::new(ErrorKind::InvalidBufLength));
         }
-        let (nonce, frame) = self.buf.split_at_mut(FRAME_NONCE_LEN);
-        let (eof_len_bytes, frame) = frame.split_at_mut(END_LEN);
+        let (frame_header, frame) = self.buf.split_at_mut(FRAME_HEADER_LEN);
+        let (seq_num_bytes, eof_len_bytes) = frame_header.split_at_mut(END_LEN_OFFSET);
+
+        let seq_num_decoded =
+            u32::from_le_bytes(seq_num_bytes.try_into().expect("seq num should be 4 bytes"));
 
         let eof_len =
             u32::from_le_bytes(eof_len_bytes.try_into().expect("eof len should be 4 bytes"));
@@ -819,31 +819,20 @@ impl FrameBuf {
         let (payload, mac) = frame.split_at_mut(payload_len);
 
         let tag = Tag::try_from(&mac[..FRAME_TAG_LEN]).expect("tag should be 16 bytes");
-        let nonce =
-            AesNonce::<FrameNonceLen>::try_from(&nonce[..]).expect("nonce should be 12 bytes");
+        let nonce = frame_nonce(seq_num_decoded);
 
         self.cipher
             .decrypt_inout_detached(&nonce, eof_len_bytes, payload.into(), &tag)?;
 
-        let seq_num_decoded = u32::from_le_bytes(
-            nonce[..SEQ_NUM_LEN]
-                .try_into()
-                .expect("seq num should be 4 bytes"),
-        );
         if seq_num != seq_num_decoded {
             return Err(Error::new(ErrorKind::UnexpectedSeqNum(
                 seq_num,
                 seq_num_decoded,
             )));
         }
-        let invocation = u64::from_le_bytes(
-            nonce[SEQ_NUM_LEN..]
-                .try_into()
-                .expect("invocation should be 8 bytes"),
-        );
         self.payload_len = payload_len;
 
-        Ok(FrameHeader::new(seq_num, invocation, is_end))
+        Ok(FrameHeader::new(seq_num, is_end))
     }
 
     /// Reset the frame buffer to an empty state.
@@ -1122,27 +1111,15 @@ impl<'a> HeaderBuilder<'a> {
 impl FrameHeader {
     /// Create a new header.
     ///
-    /// The `invocation` counter must be incremented each time the same
-    /// frame is re‑encrypted under the same data key (starting at `0`).
-    ///
     /// If `is_end` is `true`, this header describes an **End Frame**.
     /// Otherwise it describes a **Body Frame**.
-    fn new(seq_num: u32, invocation: u64, is_end: bool) -> Self {
-        Self {
-            seq_num,
-            invocation,
-            is_end,
-        }
+    fn new(seq_num: u32, is_end: bool) -> Self {
+        Self { seq_num, is_end }
     }
 
     /// Return the sequence number for this header.
     pub fn seq_num(&self) -> u32 {
         self.seq_num
-    }
-
-    /// Return the invocation number for this header.
-    pub fn invocation(&self) -> u64 {
-        self.invocation
     }
 
     /// Returns `true` if this instance represents an End Frame.
@@ -1159,7 +1136,6 @@ impl FrameHeaderBuilder {
     pub fn new(seq_num: u32) -> Self {
         Self {
             seq_num,
-            invocation: 0,
             is_end: false,
         }
     }
@@ -1170,17 +1146,9 @@ impl FrameHeaderBuilder {
         self
     }
 
-    /// Set the invocation number. The invocation number must be
-    /// incremented each time a frame is encrypted with the same data
-    /// key.
-    pub fn invocation(mut self, invocation: u64) -> Self {
-        self.invocation = invocation;
-        self
-    }
-
     /// Return a new [`FrameHeader`] instance.
     pub fn build(self) -> FrameHeader {
-        FrameHeader::new(self.seq_num, self.invocation, self.is_end)
+        FrameHeader::new(self.seq_num, self.is_end)
     }
 }
 
@@ -1213,7 +1181,7 @@ impl<T> ZymicStream<T> {
         Self {
             seq_num,
             start_seq_num: seq_num,
-            invocation: 0,
+            can_write: true,
             payload_pos: 0,
             end_len: None,
             frame_buf,
@@ -1360,17 +1328,19 @@ impl<T: Write> ZymicStream<T> {
     /// # Errors
     ///
     /// Returns an [`Error`] if writing to or flushing the inner
-    /// target fails.
+    /// target fails, or if the Stream has already been finalized or
+    /// read and is therefore immutable.
     ///
     /// [`Write`]: std::io::Write
     /// [`Error`]: crate::error::Error
     pub fn eof(&mut self) -> Result<(), Error> {
-        self.frame_buf.encrypt(
-            &FrameHeaderBuilder::new(self.seq_num)
-                .invocation(self.invocation)
-                .end()
-                .build(),
-        );
+        if !self.can_write {
+            return Err(Error::new(ErrorKind::StreamImmutable));
+        }
+
+        self.can_write = false;
+        self.frame_buf
+            .encrypt(&FrameHeaderBuilder::new(self.seq_num).end().build());
         self.inner.write_all(self.frame_buf.as_ref())?;
         self.inner.flush()?;
 
@@ -1403,6 +1373,7 @@ impl<T: Read> ZymicStream<T> {
     ///
     /// * Integrity check failure during decryption.
     fn read_next_frame(&mut self) -> Result<bool, Error> {
+        self.can_write = false;
         self.frame_buf.clear_resize_to_full();
         let mut buf = self.frame_buf.chunk_mut();
         let mut total_len = 0;
@@ -1424,13 +1395,6 @@ impl<T: Read> ZymicStream<T> {
         }
 
         let frame_header = self.frame_buf.decrypt(self.seq_num)?;
-        // Increment the invocation field so that in the event a new
-        // write is performed on this frame, the AEAD nonce is not
-        // reused.
-        self.invocation = frame_header
-            .invocation()
-            .checked_add(1)
-            .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
         self.end_len = frame_header.is_end().then_some(self.frame_buf.payload_len);
         self.payload_pos = 0;
 
@@ -1458,7 +1422,7 @@ impl<T: Read> Read for ZymicStream<T> {
     /// Returns an [`std::io::Error`] if:
     /// * The underlying read fails.
     /// * Decryption fails due to authentication or integrity checks.
-    /// * The sequence number or invocation counter overflows.
+    /// * The sequence number overflows.
     ///
     /// On decryption failure, the error’s inner cause is a [`Error`]
     /// describing the integrity violation.
@@ -1502,7 +1466,7 @@ impl<T: Read> Read for ZymicStream<T> {
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<T: Write> Write for ZymicStream<T> {
-    /// Write and ecrypted plaintext bytes to the stream.
+    /// Write and encrypt plaintext bytes to the stream.
     ///
     /// This implementation transparently handles frame boundaries:
     /// when the current frame is exhausted, it is encrypted and
@@ -1513,8 +1477,17 @@ impl<T: Write> Write for ZymicStream<T> {
     ///
     /// # Errors
     ///
-    /// Returns an [`std::io::Error`] if the underlying write fails.
+    /// Returns an [`std::io::Error`] if the underlying write fails or
+    /// if the Stream has already been finalized or read and is
+    /// therefore immutable.
     fn write(&mut self, mut buf: &[u8]) -> Result<usize, std::io::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if !self.can_write {
+            return Err(Error::new(ErrorKind::StreamImmutable).into());
+        }
+
         let mut total_len = 0;
 
         while !buf.is_empty() {
@@ -1527,15 +1500,16 @@ impl<T: Write> Write for ZymicStream<T> {
                     .seq_num
                     .checked_add(1)
                     .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
-                self.frame_buf.encrypt(
-                    &FrameHeaderBuilder::new(self.seq_num)
-                        .invocation(self.invocation)
-                        .build(),
-                );
-                self.inner.write_all(self.frame_buf.as_ref())?;
+                self.frame_buf
+                    .encrypt(&FrameHeaderBuilder::new(self.seq_num).build());
+                if let Err(err) = self.inner.write_all(self.frame_buf.as_ref()) {
+                    // A partial write may have exposed this nonce, so the
+                    // Frame cannot be encrypted or emitted again safely.
+                    self.can_write = false;
+                    return Err(err);
+                }
                 self.frame_buf.clear();
                 self.seq_num = next_seq_num;
-                self.invocation = 0;
                 self.payload_pos = 0;
             }
             let len = self.frame_buf.write_payload(self.payload_pos, buf)?;
@@ -1614,7 +1588,7 @@ impl<T: Seek + Read> ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Seek + Read + Write> Seek for ZymicStream<T> {
+impl<T: Seek + Read> Seek for ZymicStream<T> {
     /// Seek to a position within the stream.
     ///
     /// The `pos` argument corresponds to a position of plaintext
@@ -1714,10 +1688,11 @@ impl<T: Seek + Read + Write> Seek for ZymicStream<T> {
 #[cfg(test)]
 mod tests {
     use super::{
-        Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameHeader, FrameHeaderBuilder, FrameLength, Header,
-        HeaderBuilder, HeaderNonce, ALGO_OFFSET, END_LEN_OFFSET, FRAME_HEADER_LEN, FRAME_LEN_LEN,
-        FRAME_LEN_OFFSET, FRAME_META_LEN, FRAME_TAG_LEN, KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET,
-        PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET, VERSION, VERSION_OFFSET,
+        frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameHeader, FrameHeaderBuilder,
+        FrameLength, Header, HeaderBuilder, HeaderNonce, ALGO_OFFSET, END_LEN_OFFSET,
+        FRAME_HEADER_LEN, FRAME_LEN_LEN, FRAME_LEN_OFFSET, FRAME_META_LEN, FRAME_TAG_LEN,
+        KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET, PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET,
+        VERSION, VERSION_OFFSET,
     };
     use crate::{
         byte_array,
@@ -1773,8 +1748,6 @@ mod tests {
 
         let seq = frame_buf.get_u32_le();
         assert_eq!(seq, metadata.seq_num());
-        let invocation = frame_buf.get_u64_le();
-        assert_eq!(invocation, metadata.invocation());
         let eof_len = frame_buf.get_u32_le();
         assert!(
             (!metadata.is_end() && eof_len == u32::MAX)
@@ -1853,7 +1826,7 @@ mod tests {
         let max_seq_num = frame_count - 1;
         for (seq_num, frame) in stream_body.chunks(frame_len.as_usize()).enumerate() {
             let is_end = seq_num == max_seq_num;
-            let metadata = FrameHeader::new(seq_num.try_into().unwrap(), 0, is_end);
+            let metadata = FrameHeader::new(seq_num.try_into().unwrap(), is_end);
             validate_frame_bytes(frame, &metadata);
         }
     }
@@ -1946,6 +1919,20 @@ mod tests {
             bytes,
             CryptoAlgorithm::Aes256GcmHkdfSha256,
             FrameLength::default(),
+        );
+    }
+
+    /// Test the version 2 constants and nonce encoding.
+    #[test]
+    fn format_v2() {
+        assert_eq!(VERSION, 2);
+        assert_eq!(FRAME_HEADER_LEN, 8);
+        assert_eq!(FRAME_META_LEN, 24);
+
+        let nonce = frame_nonce(0x1234_5678);
+        assert_eq!(
+            &nonce[..],
+            &[0x78, 0x56, 0x34, 0x12, 0, 0, 0, 0, 0, 0, 0, 0]
         );
     }
 
@@ -2048,10 +2035,10 @@ mod tests {
         let parent_key = mock_parent_key();
         let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
         let mut header_bytes = header.bytes().clone();
-        header_bytes[VERSION_OFFSET] = 0xff;
+        header_bytes[VERSION_OFFSET] = 1;
 
         if let Err(e) = Header::from_bytes(&parent_key, header_bytes) {
-            assert!(matches!(e.kind(), ErrorKind::UnsupportedVersion(0xff)))
+            assert!(matches!(e.kind(), ErrorKind::UnsupportedVersion(1)))
         } else {
             panic!("expected an error")
         }
@@ -2232,7 +2219,7 @@ mod tests {
         assert_eq!(len, plain_txt.len());
         validate_framebuf(&frame_buf, plain_txt.len(), header.frame_len.as_usize());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         validate_frame_bytes(frame_buf.as_ref(), &frame_header);
     }
@@ -2249,7 +2236,7 @@ mod tests {
         assert_eq!(len, plain_txt.len());
         validate_framebuf(&frame_buf, plain_txt.len(), header.frame_len.as_usize());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         validate_frame_bytes(frame_buf.as_ref(), &frame_header);
     }
@@ -2268,7 +2255,7 @@ mod tests {
         assert_eq!(len, plain_txt_frame_len);
         validate_framebuf(&frame_buf, plain_txt_frame_len, header.frame_len.as_usize());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         validate_frame_bytes(frame_buf.as_ref(), &frame_header);
     }
@@ -2278,7 +2265,7 @@ mod tests {
         let parent_key = mock_parent_key();
         let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
         let mut frame_buf = FrameBuf::new(&header);
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         validate_frame_bytes(frame_buf.as_ref(), &frame_header);
         let payload = frame_buf.payload();
@@ -2290,7 +2277,7 @@ mod tests {
     fn framebuf_encrypt_panic() {
         let parent_key = mock_parent_key();
         let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         let mut frame_buf = FrameBuf::new(&header);
         frame_buf.payload_len = 1 << 31;
         frame_buf.encrypt(&frame_header);
@@ -2337,7 +2324,7 @@ mod tests {
         let len = frame_buf.write_payload(0, &plain_txt).unwrap();
         assert_eq!(len, plain_txt.len());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         validate_frame_bytes(frame_buf.as_ref(), &frame_header);
 
@@ -2356,7 +2343,7 @@ mod tests {
         let len = frame_buf.write_payload(0, &plain_txt).unwrap();
         assert_eq!(len, plain_txt.len());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         validate_frame_bytes(frame_buf.as_ref(), &frame_header);
 
@@ -2389,7 +2376,7 @@ mod tests {
         let parent_key = mock_parent_key();
         let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
         let mut frame_buf = FrameBuf::new(&header);
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
         frame_buf.decrypt(1).unwrap();
         let payload = frame_buf.payload();
@@ -2415,14 +2402,13 @@ mod tests {
         let plain_txt = vec![0u8; payload_chunk_len];
         let mut payload = Vec::with_capacity(payload_len);
 
-        let seq_num = 0;
-        for _ in 0..frame_count - 1 {
+        for seq_num in 0..frame_count - 1 {
             frame_buf.write_payload(0, &plain_txt).unwrap();
             assert!(!frame_buf.has_payload_capacity());
-            // sequence number is not important
-            let metadata = FrameHeaderBuilder::new(seq_num).build();
+            let metadata = FrameHeaderBuilder::new(seq_num.try_into().unwrap()).build();
             frame_buf.encrypt(&metadata);
             payload.extend_from_slice(frame_buf.payload());
+            frame_buf.clear();
         }
         let entropy = entropy(&payload);
         assert_eq!(f64::round(entropy), 8.0);
@@ -2451,7 +2437,7 @@ mod tests {
         let len = frame_buf.write_payload(0, &plain_txt).unwrap();
         assert_eq!(len, plain_txt.len());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
 
         let bad_len: u32 = 1 << 31;
@@ -2474,7 +2460,7 @@ mod tests {
         let mut frame_buf = FrameBuf::new(&header);
 
         // Build END frame with payload_len = 16
-        let header = FrameHeader::new(1, 2, true);
+        let header = FrameHeader::new(1, true);
         frame_buf.write_payload(0, &[0u8; 16]).unwrap();
         frame_buf.encrypt(&header);
 
@@ -2499,7 +2485,7 @@ mod tests {
         let len = frame_buf.write_payload(0, &plain_txt).unwrap();
         assert_eq!(len, plain_txt.len());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
 
         if let Err(e) = frame_buf.decrypt(2) {
@@ -2549,7 +2535,7 @@ mod tests {
         let len = frame_buf.write_payload(0, &plain_txt).unwrap();
         assert_eq!(len, plain_txt.len());
 
-        let frame_header = FrameHeader::new(1, 2, true);
+        let frame_header = FrameHeader::new(1, true);
         frame_buf.encrypt(&frame_header);
 
         // Flip the bits for each byte of the cipher text and confirm
@@ -2559,7 +2545,7 @@ mod tests {
             buf_copy[i] = !buf_copy[i];
             let mut frame_buf_reader = FrameBuf::new(&header);
             frame_buf_reader.buf = buf_copy;
-            let result = frame_buf.decrypt(0);
+            let result = frame_buf_reader.decrypt(1);
             assert!(result.is_err());
         }
     }
@@ -2667,7 +2653,7 @@ mod tests {
 
     #[cfg(feature = "std")]
     #[test]
-    fn stream_write_invocation() {
+    fn stream_write_after_eof_err() {
         let parent_key = mock_parent_key();
         let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
         let plain_txt = vec![1, 2, 3, 4, 5];
@@ -2677,13 +2663,13 @@ mod tests {
         stream.write_all(&plain_txt).unwrap();
         stream.eof().unwrap();
         assert!(stream.is_eof());
-        assert_eq!(stream.invocation, 0);
 
-        stream.seek(SeekFrom::Start(0)).unwrap();
-        stream.write_all(&plain_txt).unwrap();
-        stream.eof().unwrap();
-        assert!(stream.is_eof());
-        assert_eq!(stream.invocation, 1)
+        let err = stream.write(&plain_txt).unwrap_err();
+        let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+        assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
+
+        let err = stream.eof().unwrap_err();
+        assert!(matches!(err.kind(), ErrorKind::StreamImmutable));
     }
 
     #[cfg(feature = "std")]
@@ -2729,7 +2715,7 @@ mod tests {
 
     #[cfg(feature = "std")]
     #[test]
-    fn stream_seek_write_read() {
+    fn stream_seek_write_err() {
         let parent_key = mock_parent_key();
         let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
         let plain_txt = vec![1, 2, 3, 4, 5];
@@ -2742,39 +2728,13 @@ mod tests {
         stream.seek(SeekFrom::Start(2)).unwrap();
         assert_eq!(stream.payload_pos, 2);
 
-        let plain_txt = vec![6, 7, 8];
-        stream.write_all(&plain_txt).unwrap();
-        stream.eof().unwrap();
-        stream.rewind().unwrap();
+        let err = stream.write(&[6, 7, 8]).unwrap_err();
+        let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+        assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
 
-        let mut buf = vec![0u8; 5];
+        let mut buf = vec![0u8; 3];
         stream.read_exact(&mut buf).unwrap();
-        assert_eq!(buf, vec![1, 2, 6, 7, 8]);
-    }
-
-    #[cfg(feature = "std")]
-    #[test]
-    fn stream_seek_write_read_2() {
-        let parent_key = mock_parent_key();
-        let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
-        let plain_txt = vec![1, 2, 3, 4, 5];
-        let cursor = Cursor::new(Vec::default());
-
-        let mut stream = ZymicStream::new(cursor, &header);
-        stream.write_all(&plain_txt).unwrap();
-        stream.eof().unwrap();
-
-        stream.seek(SeekFrom::Start(2)).unwrap();
-        assert_eq!(stream.payload_pos, 2);
-
-        let plain_txt = vec![6, 7, 8];
-        stream.write_all(&plain_txt).unwrap();
-        stream.eof().unwrap();
-        stream.rewind().unwrap();
-
-        let mut buf = vec![0u8; 5];
-        stream.read_exact(&mut buf).unwrap();
-        assert_eq!(buf, vec![1, 2, 6, 7, 8]);
+        assert_eq!(buf, vec![3, 4, 5]);
     }
 
     #[cfg(feature = "std")]
@@ -2789,17 +2749,13 @@ mod tests {
         stream.write_all(&plain_txt).unwrap();
         stream.eof().unwrap();
 
-        stream.seek(SeekFrom::End(-3)).unwrap();
+        let off = stream.seek(SeekFrom::End(-3)).unwrap();
+        assert_eq!(off, 2);
         assert_eq!(stream.payload_pos, 2);
 
-        let plain_txt = vec![6, 7, 8];
-        stream.write_all(&plain_txt).unwrap();
-        stream.eof().unwrap();
-        stream.rewind().unwrap();
-
-        let mut buf = vec![0u8; 5];
+        let mut buf = vec![0u8; 3];
         stream.read_exact(&mut buf).unwrap();
-        assert_eq!(buf, vec![1, 2, 6, 7, 8]);
+        assert_eq!(buf, vec![3, 4, 5]);
     }
 
     #[cfg(feature = "std")]
@@ -2833,17 +2789,13 @@ mod tests {
         stream.eof().unwrap();
         stream.rewind().unwrap();
 
-        stream.seek(SeekFrom::Current(2)).unwrap();
+        let off = stream.seek(SeekFrom::Current(2)).unwrap();
+        assert_eq!(off, 2);
         assert_eq!(stream.payload_pos, 2);
 
-        let plain_txt = vec![6, 7, 8];
-        stream.write_all(&plain_txt).unwrap();
-        stream.eof().unwrap();
-        stream.rewind().unwrap();
-
-        let mut buf = vec![0u8; 5];
+        let mut buf = vec![0u8; 3];
         stream.read_exact(&mut buf).unwrap();
-        assert_eq!(buf, vec![1, 2, 6, 7, 8]);
+        assert_eq!(buf, vec![3, 4, 5]);
     }
 
     #[cfg(feature = "std")]
