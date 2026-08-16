@@ -32,6 +32,7 @@ os_rng = ["dep:rand_core", "rand_core/os_rng"]
 rand_core = ["dep:rand_core"]
 serde = ["dep:serde"]
 std = []
+v1 = []
 zeroize = ["dep:zeroize", "aes-gcm/zeroize"]
 
 
