@@ -450,7 +450,17 @@ fn precommit() -> io::Result<()> {
     let test_args = [
         vec!["fmt", "--check"],
         vec!["clippy"],
-        vec!["test"],
+        vec!["test", "--all-features"],
+        vec![
+            "+nightly",
+            "rustdoc",
+            "-p",
+            "zymic_core",
+            "--all-features",
+            "--",
+            "--cfg",
+            "docsrs",
+        ],
         vec!["hack", "test", "--no-run", "--feature-powerset"],
     ];
     for args in test_args {
