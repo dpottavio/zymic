@@ -1,12 +1,6 @@
 // SPDX-License-Identifier: MIT
 //! A module for defining cryptographic key types.
-use crate::bytes::ByteArray;
-
-#[cfg(feature = "rand_core")]
-use crate::error::Error;
-
-#[cfg(feature = "rand_core")]
-use crate::{TryCryptoRng, TryRngCore};
+use crate::{bytes::ByteArray, error::Error};
 
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
@@ -43,21 +37,30 @@ impl ParentKey {
         &self.id
     }
 
-    /// Return the secret key material for this instance.    
+    /// Return the secret key material for this instance.
     pub fn secret(&self) -> &ParentKeySecret {
         &self.secret
     }
 
-    /// Create a new instance from a secure pseudo-random number generator.
-    #[cfg(feature = "rand_core")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
-    pub fn try_from_crypto_rand<R>(rand_source: &mut R) -> Result<Self, Error>
+    /// Generates a parent key using a caller-provided secure byte source.
+    ///
+    /// `fill` must completely fill each buffer using a cryptographically
+    /// secure random source. The function is called once for the public ID
+    /// and once for the secret.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] containing the fill function's error message if
+    /// either call to the fill function fails.
+    pub fn try_from_fill<F, E>(mut fill: F) -> Result<Self, Error>
     where
-        R: TryCryptoRng + TryRngCore,
+        F: FnMut(&mut [u8]) -> Result<(), E>,
+        E: core::fmt::Display,
     {
-        let id = ParentKeyId::try_from_crypto_rand(rand_source)?;
-        let secret = ParentKeySecret::try_from_crypto_rand(rand_source)?;
-        Ok(Self { id, secret })
+        let id = ParentKeyId::try_from_fill(&mut fill)?;
+        let secret = ParentKeySecret::try_from_fill(fill)?;
+
+        Ok(Self::new(id, secret))
     }
 }
 
@@ -65,5 +68,25 @@ impl ParentKey {
 impl Drop for ParentKey {
     fn drop(&mut self) {
         self.secret.zeroize();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parent_key_try_from_fill() {
+        let mut calls = 0u8;
+        let parent_key = ParentKey::try_from_fill(|buf| {
+            calls += 1;
+            buf.fill(calls);
+            Ok::<(), &str>(())
+        })
+        .unwrap();
+
+        assert_eq!(parent_key.id().as_slice(), &[1; ParentKeyId::LEN]);
+        assert_eq!(parent_key.secret().as_slice(), &[2; ParentKeySecret::LEN]);
+        assert_eq!(calls, 2);
     }
 }

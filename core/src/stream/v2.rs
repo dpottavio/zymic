@@ -316,23 +316,20 @@ pub struct FrameHeaderBuilder {
 /// then loads and decrypts them.
 ///
 /// ```rust
-/// # #[cfg(feature = "os_rng")]
 /// # {
 /// use zymic_core::{
 ///     key::ParentKey,
 ///     stream::{FrameBuf, FrameHeaderBuilder, HeaderBuilder, HeaderNonce},
 /// };
 /// # use zymic_core::Error;
-/// # use zymic_core::OsRng;
 /// #
 /// # fn main() -> Result<(), Error> {
-/// # #[cfg(feature = "os_rng")]
 /// # {
 /// let plain = vec![1, 2, 3, 4, 5];
 ///
 /// // Build header/keying material per your application.
-/// let parent_key = ParentKey::try_from_crypto_rand(&mut OsRng)?;
-/// let nonce = HeaderNonce::try_from_crypto_rand(&mut OsRng)?;
+/// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+/// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
 /// let header = HeaderBuilder::new(&parent_key, &nonce).build();
 ///
 /// // Prepare a frame and encrypt the payload.
@@ -443,10 +440,9 @@ pub struct FrameBuf {
 ///```rust
 /// #
 /// #
-/// # #[cfg(all(feature = "std", feature = "os_rng"))]
 /// # {
 /// use std::io::{Cursor, copy};
-/// use zymic_core::{OsRng, key::ParentKey,
+/// use zymic_core::{key::ParentKey,
 ///     stream::{HeaderBuilder, HeaderNonce, ZymicStream}
 /// };
 /// # use zymic_core::Error;
@@ -458,8 +454,12 @@ pub struct FrameBuf {
 /// //
 /// let plain_txt = vec![1,2,3,4,5];
 /// let mut plain_cursor = Cursor::new(plain_txt);
-/// let parent_key = ParentKey::try_from_crypto_rand(&mut OsRng)?;
-/// let nonce = HeaderNonce::try_from_crypto_rand(&mut OsRng)?;
+///
+/// // Fill the parent key and nonce with cryptographically secure
+/// // random data.
+/// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+/// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+///
 /// let header = HeaderBuilder::new(&parent_key, &nonce).build();
 /// let mut cipher_txt = Vec::default();
 /// let mut writer = ZymicStream::new(cipher_txt, &header);

@@ -11,6 +11,7 @@ pub struct Error {
 #[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ErrorKind {
     Authentication,
+    ByteFill(String),
     Cipher(String),
     #[cfg(feature = "std")]
     IntegerOverflow,
@@ -23,8 +24,6 @@ pub(crate) enum ErrorKind {
     #[cfg(feature = "std")]
     Io(String),
     ParentKeyIdMismatch,
-    #[cfg(feature = "rand_core")]
-    Rng(String),
     #[cfg(feature = "std")]
     StreamImmutable,
     #[cfg(feature = "std")]
@@ -41,6 +40,7 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
             ErrorKind::Authentication => write!(f, "authentication failure"),
+            ErrorKind::ByteFill(e) => write!(f, "failed to fill byte buffer: {e}"),
             ErrorKind::Cipher(e) => write!(f, "cipher failure: {e}"),
             #[cfg(feature = "std")]
             ErrorKind::IntegerOverflow => write!(f, "integer overflow"),
@@ -62,8 +62,6 @@ impl fmt::Display for Error {
                 f,
                 "parent key ID does not match the parent key ID found in the header"
             ),
-            #[cfg(feature = "rand_core")]
-            ErrorKind::Rng(e) => write!(f, "failed to generate random data: {e}"),
             #[cfg(feature = "std")]
             ErrorKind::StreamImmutable => write!(f, "stream is immutable"),
             #[cfg(feature = "std")]

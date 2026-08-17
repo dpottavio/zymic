@@ -3,12 +3,7 @@
 
 use crate::error::{Error, ErrorKind};
 
-#[cfg(feature = "rand_core")]
-use crate::{TryCryptoRng, TryRngCore};
-
-#[cfg(feature = "rand_core")]
 use alloc::format;
-
 #[cfg(feature = "serde")]
 use core::fmt;
 use core::ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeTo};
@@ -86,25 +81,6 @@ macro_rules! byte_array {
 ///
 /// let bytes = byte_array![0xffu8; 32];
 /// assert_eq!(bytes.as_array(), &[0xffu8; 32]);
-///```
-///
-/// The following example requires the `os_rng` feature.
-///
-///```
-/// # #[cfg(feature = "os_rng")]
-/// # {
-/// use zymic_core::{OsRng, bytes::ByteArray};
-/// # use zymic_core::Error;
-/// #
-/// # fn main() -> Result<(), Error> {
-/// #
-///
-/// // Allocate a 16 byte cryptographic key.
-/// let key = ByteArray::<16>::try_from_crypto_rand(&mut OsRng)?;
-/// #
-/// # Ok(())
-/// # }
-/// # }
 ///```
 #[derive(Debug, PartialEq, Clone)]
 #[repr(transparent)]
@@ -262,29 +238,6 @@ impl<const N: usize> IndexMut<RangeTo<usize>> for ByteArray<N> {
     }
 }
 
-impl<const N: usize> ByteArray<N> {
-    /// Construct a `ByteArray<N>` by filling it with random bytes from a
-    /// fallible, cryptographically secure RNG.
-    ///
-    /// # Features
-    /// - Requires the `rand_core` feature.
-    ///
-    /// # Errors
-    /// Returns an error if the RNG fails to produce bytes.
-    #[cfg(feature = "rand_core")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
-    pub fn try_from_crypto_rand<R>(rand_source: &mut R) -> Result<Self, Error>
-    where
-        R: TryCryptoRng + TryRngCore,
-    {
-        let mut buf = Self::default();
-        rand_source
-            .try_fill_bytes(&mut buf)
-            .map_err(|e| Error::new(ErrorKind::Rng(format!("{e}"))))?;
-        Ok(buf)
-    }
-}
-
 #[cfg(feature = "serde")]
 struct ByteArrayVisitor<const N: usize>;
 
@@ -327,6 +280,24 @@ impl<'de, const N: usize> Visitor<'de> for ByteArrayVisitor<N> {
 impl<const N: usize> ByteArray<N> {
     /// Length of the instance in bytes.
     pub const LEN: usize = N;
+
+    /// Constructs a new instance using a caller-provided fill function.
+    ///
+    /// The fill function must initialize the entire provided buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an [`Error`] containing the fill function's error message if
+    /// the fill function fails.
+    pub fn try_from_fill<F, E>(fill: F) -> Result<Self, Error>
+    where
+        F: FnOnce(&mut [u8]) -> Result<(), E>,
+        E: core::fmt::Display,
+    {
+        let mut bytes = Self::default();
+        fill(bytes.as_mut()).map_err(|e| Error::new(ErrorKind::ByteFill(format!("{e}"))))?;
+        Ok(bytes)
+    }
 
     /// Copies a `[u8]` slice into a new ByteArray instance.
     ///
@@ -600,6 +571,27 @@ mod tests {
         } else {
             panic!("expecting an error")
         }
+    }
+
+    #[test]
+    fn byte_array_try_from_fill() {
+        let bytes = ByteArray::<4>::try_from_fill(|buf| {
+            buf.copy_from_slice(&[1, 2, 3, 4]);
+            Ok::<(), &str>(())
+        })
+        .unwrap();
+
+        assert_eq!(bytes.as_slice(), &[1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn byte_array_try_from_fill_err() {
+        let error = ByteArray::<4>::try_from_fill(|_| Err("fill failed")).unwrap_err();
+
+        assert!(matches!(
+            error.kind(),
+            ErrorKind::ByteFill(message) if message == "fill failed"
+        ));
     }
 
     #[test]

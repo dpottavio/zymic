@@ -17,7 +17,6 @@ use zeroize::Zeroizing;
 use zymic_core::{
     key::{ParentKeyId, ParentKeySecret},
     stream::{Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream},
-    OsRng,
 };
 
 #[derive(Parser)]
@@ -408,8 +407,8 @@ pub fn handle_input() -> Result<(), Error> {
                 if password != password_chk {
                     return Err(Error::new(ErrorKind::PasswordMismatch));
                 }
-                let id = ParentKeyId::try_from_crypto_rand(&mut OsRng)?;
-                let secret = ParentKeySecret::try_from_crypto_rand(&mut OsRng)?;
+                let id = ParentKeyId::try_from_fill(getrandom::fill)?;
+                let secret = ParentKeySecret::try_from_fill(getrandom::fill)?;
 
                 let key_file =
                     KeyFile::new(id, &secret, args.argon_config.to_setting(), &password)?;
@@ -468,7 +467,7 @@ pub fn handle_input() -> Result<(), Error> {
 
             let mut io_args = enc_args_to_io(args.file, args.output, args.force)?;
 
-            let nonce = HeaderNonce::try_from_crypto_rand(&mut OsRng)?;
+            let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
 
             let header = HeaderBuilder::new(&parent_key, &nonce).build();
             let header_bytes = header.bytes();

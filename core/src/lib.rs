@@ -39,14 +39,6 @@ pub use error::Error;
 pub mod key;
 pub mod stream;
 
-#[cfg(feature = "rand_core")]
-#[cfg_attr(docsrs, doc(cfg(feature = "rand_core")))]
-pub use rand_core::{TryCryptoRng, TryRngCore};
-
-#[cfg(feature = "os_rng")]
-#[cfg_attr(docsrs, doc(cfg(feature = "os_rng")))]
-pub use rand_core::OsRng;
-
 #[cfg(feature = "serde")]
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 pub use serde::{Deserialize, Serialize};

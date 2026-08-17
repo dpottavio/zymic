@@ -19,13 +19,14 @@ base64 = { version = "0.22", features = ["alloc"],  default-features = false}
 chrono = {version = "0.4", features = ["alloc"], default-features = false}
 clap = { version = "4.4", features = ["derive"] }
 dirs = "6.0"
+getrandom = { version = "0.4", default-features = false}
 indoc = "2.0"
 rpassword = { version = "7.3", default-features = false}
 serde = { version = "1.0", features = ["derive"], default-features = false }
 serde_json = {version = "1.0", features = ["alloc", "std"], default-features = false}
 serde_repr = {version = "0.1", default-features = false}
 zeroize = { version = "1.8", features = ["std"] }
-zymic_core = { path = "../core", version = "0.1.2", features = ["os_rng", "std", "serde", "zeroize"], default-features = false }
+zymic_core = { path = "../core", version = "0.1", features = ["std", "serde", "zeroize"], default-features = false }
 
 [dev-dependencies]
 rexpect = "0.6.0"
