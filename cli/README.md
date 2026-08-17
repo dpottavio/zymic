@@ -78,6 +78,9 @@ zymic enc foo.txt
 
 # Decrypt a file
 zymic dec foo.txt.zym
+
+# Decrypt a legacy version 1 file
+zymic dec --v1 foo-v1.txt.zym
 ```
 ## Usage
 
@@ -133,6 +136,7 @@ Options:
   -o, --output <OUTPUT>  Output file, or '-' to write to stdout
   -k, --key <KEY>        Key file path
   -f, --force            Overwrite files without any check
+      --v1               Decrypt using the legacy version 1 format
   -h, --help             Print help
 
 ```
