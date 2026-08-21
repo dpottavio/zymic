@@ -3,7 +3,7 @@ name = "zymic_cli"
 version = "0.1.3"
 edition = "2021"
 description = """
-Encrypt and decrypt files using the Zymic format.
+Simple file encryption tool.
 """
 license = "MIT"
 keywords = ["encryption","cli"]
