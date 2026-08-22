@@ -492,7 +492,7 @@ mod cli_integ_tests {
         session
             .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
             .unwrap();
-        session.exp_string("frame-length:\t16384").unwrap();
+        session.exp_string("frame-length:\t65536").unwrap();
         session.exp_string("parent-key-id:\t").unwrap();
         session.exp_eof().unwrap();
         let status = session.process.exit().unwrap();
@@ -520,7 +520,7 @@ mod cli_integ_tests {
         session
             .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
             .unwrap();
-        session.exp_string("frame-length:\t16384").unwrap();
+        session.exp_string("frame-length:\t65536").unwrap();
         session.exp_string("parent-key-id:\t").unwrap();
         session.exp_eof().unwrap();
         let status = session.process.exit().unwrap();

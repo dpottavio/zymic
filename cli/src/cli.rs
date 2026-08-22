@@ -17,7 +17,9 @@ use std::{
 use zeroize::Zeroizing;
 use zymic_core::{
     key::{ParentKey, ParentKeyId, ParentKeySecret},
-    stream::{CryptoAlgorithm, Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream},
+    stream::{
+        CryptoAlgorithm, FrameLength, Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream,
+    },
 };
 
 #[derive(Parser)]
@@ -567,7 +569,9 @@ pub fn handle_input() -> Result<(), Error> {
 
             let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
 
-            let header = HeaderBuilder::new(&parent_key, &nonce).build();
+            let header = HeaderBuilder::new(&parent_key, &nonce)
+                .with_frame_len(FrameLength::Len64KiB)
+                .build();
             let header_bytes = header.bytes();
             io_args.output.write_all(header_bytes)?;
 
