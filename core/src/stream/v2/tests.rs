@@ -295,7 +295,10 @@ fn header_max_frame_len() {
         .with_frame_len(FrameLength::Len64KiB)
         .build();
     let header = Header::from_bytes(&parent_key, expected_header.bytes().clone()).unwrap();
-    assert_eq!(expected_header, header);
+    assert!(
+        expected_header == header,
+        "parsed header differs from source"
+    );
 }
 
 /// Test allocating a Header instance from raw bytes.
@@ -305,7 +308,10 @@ fn header_from_bytes() {
     let expected_header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
     let bytes = expected_header.bytes();
     let header = Header::from_bytes(&parent_key, bytes.clone()).unwrap();
-    assert_eq!(expected_header, header);
+    assert!(
+        expected_header == header,
+        "parsed header differs from source"
+    );
 }
 
 /// Negative test trying to allocate a Header from invalid bytes.

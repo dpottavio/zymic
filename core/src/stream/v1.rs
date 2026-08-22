@@ -106,7 +106,7 @@ pub enum FrameLength {
 }
 
 /// A validated v1 stream header and its derived Data Key.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq, Clone)]
 pub struct Header {
     frame_len: FrameLength,
     data_key: aes_gcm::Key<Aes256Gcm>,

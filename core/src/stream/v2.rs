@@ -239,7 +239,7 @@ pub enum FrameLength {
 
 /// This type is responsible for encoding/decoding the stream header
 /// and deriving the stream data key.
-#[derive(PartialEq, Clone, Debug)]
+#[derive(PartialEq)]
 pub struct Header {
     frame_len: FrameLength,
     data_key: aes_gcm::Key<Aes256Gcm>,

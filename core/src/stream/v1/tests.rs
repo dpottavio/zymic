@@ -107,7 +107,10 @@ fn header_parser_only_version_one() {
     let bytes = HeaderBytes::from(&FIXTURE[..HEADER_LEN]);
     Header::from_bytes(&parent_key(), bytes.clone()).unwrap();
 
-    let error = crate::stream::v2::Header::from_bytes(&parent_key(), bytes).unwrap_err();
+    let error = match crate::stream::v2::Header::from_bytes(&parent_key(), bytes) {
+        Err(error) => error,
+        Ok(_) => panic!("v2 parser accepted a v1 header"),
+    };
     assert_eq!(error.kind(), &ErrorKind::UnsupportedVersion(1));
 }
 
