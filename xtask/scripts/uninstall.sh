@@ -29,7 +29,11 @@ DRY_RUN="${DRY_RUN:-0}"
 
 run() {
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[dry-run] %s\n' "$*"
+    printf '[dry-run]'
+    for arg in "$@"; do
+      printf ' %s' "$arg"
+    done
+    printf '\n'
   else
     "$@"
   fi
@@ -38,7 +42,7 @@ run() {
 echo "Uninstalling from $ROOT"
 
 # Files to remove (keep in sync with install.sh)
-rm -f \
+run rm -f -- \
   "$ROOT/bin/zymic" \
   "$ROOT/share/man/man1/zymic.1.gz" \
   "$ROOT/share/man/man1/zymic-enc.1.gz" \
@@ -53,20 +57,22 @@ rm -f \
   "$ROOT/share/elvish/lib/zymic.elv" 2>/dev/null || true
 
 # Use run for commands that may fail/are optional
-run rmdir "$ROOT/share/elvish/lib" 2>/dev/null || true
-run rmdir "$ROOT/share/elvish" 2>/dev/null || true
-run rmdir "$ROOT/share/fish/vendor_completions.d" 2>/dev/null || true
-run rmdir "$ROOT/share/fish" 2>/dev/null || true
-run rmdir "$ROOT/share/zsh/site-functions" 2>/dev/null || true
-run rmdir "$ROOT/share/zsh" 2>/dev/null || true
-run rmdir "$ROOT/share/bash-completion/completions" 2>/dev/null || true
-run rmdir "$ROOT/share/bash-completion" 2>/dev/null || true
-run rmdir "$ROOT/share/man/man1" 2>/dev/null || true
-run rmdir "$ROOT/share/man" 2>/dev/null || true
+run rmdir -- "$ROOT/share/elvish/lib" 2>/dev/null || true
+run rmdir -- "$ROOT/share/elvish" 2>/dev/null || true
+run rmdir -- "$ROOT/share/fish/vendor_completions.d" 2>/dev/null || true
+run rmdir -- "$ROOT/share/fish" 2>/dev/null || true
+run rmdir -- "$ROOT/share/zsh/site-functions" 2>/dev/null || true
+run rmdir -- "$ROOT/share/zsh" 2>/dev/null || true
+run rmdir -- "$ROOT/share/bash-completion/completions" 2>/dev/null || true
+run rmdir -- "$ROOT/share/bash-completion" 2>/dev/null || true
+run rmdir -- "$ROOT/share/man/man1" 2>/dev/null || true
+run rmdir -- "$ROOT/share/man" 2>/dev/null || true
 
-if command -v mandb >/dev/null 2>&1; then
+if [ -z "$DESTDIR" ] && command -v mandb >/dev/null 2>&1; then
   run mandb -q
 fi
 
 echo "Done."
-[ "$DRY_RUN" = "1" ] && echo "(dry-run only, no files changed)"
+if [ "$DRY_RUN" = "1" ]; then
+  echo "(dry-run only, no files changed)"
+fi

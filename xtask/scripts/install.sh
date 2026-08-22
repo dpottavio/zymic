@@ -39,44 +39,50 @@ DRY_RUN="${DRY_RUN:-0}"
 
 run() {
   if [ "$DRY_RUN" = "1" ]; then
-    printf '[dry-run] %s\n' "$*"
+    printf '[dry-run]'
+    for arg in "$@"; do
+      printf ' %s' "$arg"
+    done
+    printf '\n'
   else
-    $*
+    "$@"
   fi
 }
 
 echo "Installing to $ROOT"
 
 # Binary
-run install -Dm755 "$SELF_DIR/zymic" "$ROOT/bin/zymic"
+run install -Dm755 -- "$SELF_DIR/zymic" "$ROOT/bin/zymic"
 
 # Man pages
 for f in "$SELF_DIR"/man/*.1.gz; do
   [ -f "$f" ] || continue
-  run install -Dm644 "$f" "$ROOT/share/man/man1/$(basename "$f")"
+  run install -Dm644 -- "$f" "$ROOT/share/man/man1/$(basename "$f")"
 done
 
 # Completions
 [ -f "$SELF_DIR/completions/zymic.bash" ] && \
-  run install -Dm644 "$SELF_DIR/completions/zymic.bash" \
+  run install -Dm644 -- "$SELF_DIR/completions/zymic.bash" \
     "$ROOT/share/bash-completion/completions/zymic"
 
 [ -f "$SELF_DIR/completions/_zymic" ] && \
-  run install -Dm644 "$SELF_DIR/completions/_zymic" \
+  run install -Dm644 -- "$SELF_DIR/completions/_zymic" \
     "$ROOT/share/zsh/site-functions/_zymic"
 
 [ -f "$SELF_DIR/completions/zymic.fish" ] && \
-  run install -Dm644 "$SELF_DIR/completions/zymic.fish" \
+  run install -Dm644 -- "$SELF_DIR/completions/zymic.fish" \
     "$ROOT/share/fish/vendor_completions.d/zymic.fish"
 
 [ -f "$SELF_DIR/completions/zymic.elv" ] && \
-  run install -Dm644 "$SELF_DIR/completions/zymic.elv" \
+  run install -Dm644 -- "$SELF_DIR/completions/zymic.elv" \
     "$ROOT/share/elvish/lib/zymic.elv"
 
 # Update man db if available
-if command -v mandb >/dev/null 2>&1; then
+if [ -z "$DESTDIR" ] && command -v mandb >/dev/null 2>&1; then
   run mandb -q
 fi
 
 echo "Done."
-[ "$DRY_RUN" = "1" ] && echo "(dry-run only, no files changed)"
+if [ "$DRY_RUN" = "1" ]; then
+  echo "(dry-run only, no files changed)"
+fi
