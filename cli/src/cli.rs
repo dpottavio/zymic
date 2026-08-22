@@ -10,13 +10,14 @@ use std::os::unix::fs::OpenOptionsExt;
 use std::{
     env,
     ffi::OsStr,
-    fmt, fs, io,
+    fmt, fs,
+    io::{self, Read},
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
 use zymic_core::{
     key::{ParentKey, ParentKeyId, ParentKeySecret},
-    stream::{Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream},
+    stream::{CryptoAlgorithm, Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream},
 };
 
 #[derive(Parser)]
@@ -36,6 +37,9 @@ Examples:
 
 - Decrypt your data:
   zymic dec my_data.txt.zym
+
+- Display encrypted file information:
+  zymic info my_data.txt.zym
 "#})]
 pub struct Cli {
     #[command(subcommand)]
@@ -72,6 +76,14 @@ Examples:
 "#})]
     /// Encrypt data.
     Enc(EncArgs),
+    #[command(after_help = indoc! {r#"
+Examples:
+
+- Display encrypted file information:
+  zymic info foo.txt.zym
+"#})]
+    /// Display encrypted file header information.
+    Info(InfoArgs),
     /// Key file sub-commands.
     Key(KeyArgs),
 }
@@ -180,6 +192,18 @@ struct EncArgs {
     /// Overwrite files without any check
     #[arg(short, long)]
     force: bool,
+}
+
+#[derive(Args)]
+struct InfoArgs {
+    /// Encrypted file to inspect
+    file: PathBuf,
+    /// Authenticate the header (password required)
+    #[arg(short, long)]
+    auth: bool,
+    /// Key file path (only used with --auth)
+    #[arg(short, long, requires = "auth")]
+    key: Option<PathBuf>,
 }
 
 /// CLI general input and output arguments.
@@ -407,6 +431,38 @@ where
     Ok(())
 }
 
+/// Decode and print header fields.
+fn print_header_info(bytes: &HeaderBytes) {
+    const VERSION_OFFSET: usize = 4;
+    const ALGORITHM_OFFSET: usize = 5;
+    const FRAME_LEN_OFFSET: usize = 7;
+    const PARENT_KEY_ID_OFFSET: usize = 32;
+
+    let algorithm = u16::from_le_bytes([bytes[ALGORITHM_OFFSET], bytes[ALGORITHM_OFFSET + 1]]);
+    let frame_len = bytes[FRAME_LEN_OFFSET];
+    let parent_key_id = &bytes[PARENT_KEY_ID_OFFSET..PARENT_KEY_ID_OFFSET + ParentKeyId::LEN];
+
+    println!("version:\t{}", bytes[VERSION_OFFSET]);
+    if algorithm == CryptoAlgorithm::Aes256GcmHkdfSha256 as u16 {
+        println!("algorithm:\t{}", CryptoAlgorithm::Aes256GcmHkdfSha256);
+    } else {
+        println!("algorithm:\t{algorithm}");
+    }
+    if let Some(frame_len) = 1usize.checked_shl(frame_len.into()) {
+        println!("frame-length:\t{frame_len}");
+    } else {
+        println!("frame-length:\t2^{frame_len}");
+    }
+    print!("parent-key-id:\t");
+    for (index, byte) in parent_key_id.iter().enumerate() {
+        print!("{byte:02x}");
+        if index + 1 < parent_key_id.len() {
+            print!(":");
+        }
+    }
+    println!();
+}
+
 /// Decrypt a stream encoded using the legacy version 1 format.
 fn decrypt_v1<R, W>(input: &mut R, output: &mut W, key: &ParentKey) -> Result<(), Error>
 where
@@ -520,6 +576,20 @@ pub fn handle_input() -> Result<(), Error> {
             io::copy(&mut buf_reader, &mut writer)?;
             writer.eof()?;
         }
+        Command::Info(args) => {
+            let mut input = fs::OpenOptions::new().read(true).open(args.file)?;
+            let mut header_bytes = HeaderBytes::default();
+            input.read_exact(&mut header_bytes)?;
+            if args.auth {
+                let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
+                let file = fs::OpenOptions::new().read(true).open(&key_path)?;
+                let key_file: KeyFile = serde_json::from_reader(file)?;
+                let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
+                let parent_key = key_file.unwrap(&password)?;
+                Header::from_bytes(&parent_key, header_bytes.clone())?;
+            }
+            print_header_info(&header_bytes);
+        }
         Command::Dec(args) => {
             let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
             let file = fs::OpenOptions::new().read(true).open(&key_path)?;
@@ -542,7 +612,7 @@ pub fn handle_input() -> Result<(), Error> {
 mod tests {
     use super::{decrypt_v1, Cli, Command};
     use clap::Parser;
-    use std::io::Cursor;
+    use std::{io::Cursor, path::PathBuf};
     use zymic_core::{
         byte_array,
         key::{ParentKey, ParentKeyId, ParentKeySecret},
@@ -574,6 +644,37 @@ mod tests {
             panic!("expected dec command");
         };
         assert!(args.v1);
+    }
+
+    #[test]
+    fn info_argument() {
+        let cli = Cli::try_parse_from([
+            "zymic",
+            "info",
+            "archive.zym",
+            "--auth",
+            "--key",
+            "key.json",
+        ])
+        .unwrap();
+
+        let Command::Info(args) = cli.cmd else {
+            panic!("expected info command");
+        };
+        assert_eq!(args.file, PathBuf::from("archive.zym"));
+        assert!(args.auth);
+        assert_eq!(args.key, Some(PathBuf::from("key.json")));
+    }
+
+    #[test]
+    fn info_defaults_to_unauthenticated() {
+        let cli = Cli::try_parse_from(["zymic", "info", "archive.zym"]).unwrap();
+
+        let Command::Info(args) = cli.cmd else {
+            panic!("expected info command");
+        };
+        assert!(!args.auth);
+        assert_eq!(args.key, None);
     }
 
     #[test]

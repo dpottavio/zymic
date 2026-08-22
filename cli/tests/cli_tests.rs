@@ -478,6 +478,55 @@ mod cli_integ_tests {
         session.exp_eof().unwrap();
     }
 
+    /// Test the encrypted stream info command.
+    #[test]
+    fn stream_info() {
+        let tmp_dir = TmpDir::new("stream_info");
+        let key_path = cli_new_key(&tmp_dir.path);
+        let plain_txt = create_plaintxt(&tmp_dir.path);
+        let cipher_txt = cli_encrypt(&tmp_dir.path, &key_path, &plain_txt);
+        let cmd = format!("{} info {}", CLI_PATH, cipher_txt.display());
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("version:\t2").unwrap();
+        session
+            .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
+            .unwrap();
+        session.exp_string("frame-length:\t16384").unwrap();
+        session.exp_string("parent-key-id:\t").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process.exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+    }
+
+    /// Test authenticated encrypted stream information.
+    #[test]
+    fn stream_info_auth() {
+        let tmp_dir = TmpDir::new("stream_info_auth");
+        let key_path = cli_new_key(&tmp_dir.path);
+        let plain_txt = create_plaintxt(&tmp_dir.path);
+        let cipher_txt = cli_encrypt(&tmp_dir.path, &key_path, &plain_txt);
+        let cmd = format!(
+            "{} info --auth -k {} {}",
+            CLI_PATH,
+            key_path.display(),
+            cipher_txt.display()
+        );
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter key password:").unwrap();
+        session.send_line(DEFAULT_PASSWORD).unwrap();
+        session.exp_string("version:\t2").unwrap();
+        session
+            .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
+            .unwrap();
+        session.exp_string("frame-length:\t16384").unwrap();
+        session.exp_string("parent-key-id:\t").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process.exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+    }
+
     /// Force overwrite file decrypt
     #[test]
     fn force_file_encrypt() {

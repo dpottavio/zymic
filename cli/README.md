@@ -90,6 +90,7 @@ Usage: zymic <COMMAND>
 Commands:
   dec   Decrypt data
   enc   Encrypt data
+  info  Display encrypted file header information
   key   Key file sub-commands
   help  Print this message or the help of the given subcommand(s)
 
@@ -143,6 +144,23 @@ Options:
 
 Default output strips the `.zym` extension from the `FILE` (e.g.,
 `foo.txt.zym` → `foo.txt`).
+
+### `info`
+
+Display encrypted file header information. Use `--auth` to authenticate the
+header with a key file.
+
+```
+Usage: zymic info [OPTIONS] <FILE>
+
+Arguments:
+  <FILE>  Encrypted file to inspect
+
+Options:
+  -a, --auth       Authenticate the header (password required)
+  -k, --key <KEY>  Key file path (only used with --auth)
+  -h, --help       Print help
+```
 
 ### `key new`
 
