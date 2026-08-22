@@ -11,7 +11,7 @@ use std::{
     env,
     ffi::OsStr,
     fmt, fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
 };
 use zeroize::Zeroizing;
@@ -430,6 +430,7 @@ where
     let mut reader = ZymicStream::new(input, &header);
     io::copy(&mut reader, &mut buf_writer)?;
     reader.is_eof_or_err()?;
+    buf_writer.flush()?;
     Ok(())
 }
 
@@ -481,6 +482,7 @@ where
     let mut reader = Reader::new(input, &header);
     io::copy(&mut reader, &mut buf_writer)?;
     reader.is_eof_or_err()?;
+    buf_writer.flush()?;
     Ok(())
 }
 
