@@ -1281,52 +1281,45 @@ impl<T> ZymicStream<T> {
         Ok(u32::try_from(frame_idx)?)
     }
 
-    /// Convert a payload offset to an frame offset.
-    ///
-    /// Payload offset is position within the logical payload data of
-    /// the stream (excluding header metadata).
-    ///
-    /// Frame offset is the corresponding byte position of the
-    /// containing frame in the full stream.
-    #[inline]
-    fn payload_off_to_frame_off(&self, payload_offset: u64) -> Result<u64, Error> {
-        let frame_idx = payload_offset / self.frame_buf.max_payload_len as u64;
-        let frame_off = frame_idx
-            .checked_mul(self.frame_buf.frame_len as u64)
-            .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
-
-        Ok(frame_off)
-    }
-
     /// Return the current absolute payload offset.
     #[inline]
     fn current_payload_off(&self) -> Result<u64, Error> {
-        let frame_off = self.current_frame_idx();
-        let abs_payload_off = (frame_off as usize)
-            .checked_mul(self.frame_buf.max_payload_len)
-            //.and_then(|v| v.checked_sub(self.frame_buf.max_payload_len))
-            .and_then(|v| v.checked_add(self.payload_pos))
+        let frame_idx = self.current_frame_idx();
+        let abs_payload_off = (frame_idx as u64)
+            .checked_mul(self.frame_buf.max_payload_len as u64)
+            .and_then(|v| v.checked_add(self.payload_pos as u64))
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
 
-        Ok(abs_payload_off as u64)
+        Ok(abs_payload_off)
     }
 
-    /// Return the payload offset of the last frame in the stream.
+    /// Return the total payload length through the current frame.
     #[inline]
-    fn payload_end_off(&self) -> Result<u64, Error> {
-        let frame_off = self.current_frame_idx();
-        let abs_payload_len = (frame_off as usize)
-            .checked_mul(self.frame_buf.max_payload_len)
-            .and_then(|v| v.checked_add(self.frame_buf.payload_len.saturating_sub(1)))
+    fn total_payload_len(&self) -> Result<u64, Error> {
+        let frame_idx = self.current_frame_idx();
+        let abs_payload_len = (frame_idx as u64)
+            .checked_mul(self.frame_buf.max_payload_len as u64)
+            .and_then(|v| v.checked_add(self.frame_buf.payload_len as u64))
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
 
-        Ok(abs_payload_len as u64)
+        Ok(abs_payload_len)
     }
 
     /// Return the current frame index.
     #[inline]
     fn current_frame_idx(&self) -> u32 {
-        self.seq_num - self.start_seq_num
+        let frame_idx = self.seq_num - self.start_seq_num;
+
+        // On the read path, `seq_num` advances immediately after a Body
+        // Frame is loaded, while `frame_buf` continues to expose that
+        // Frame's payload. Account for that difference when computing the
+        // logical position. Do not apply it while encoding a stream, where
+        // `seq_num` still identifies the buffered Frame.
+        if !self.can_write && self.end_len.is_none() && self.frame_buf.payload_len > 0 {
+            frame_idx.saturating_sub(1)
+        } else {
+            frame_idx
+        }
     }
 
     /// Return the number of payload bytes remaining in the current
@@ -1403,6 +1396,7 @@ impl<T: Read> ZymicStream<T> {
     fn read_next_frame(&mut self) -> Result<bool, Error> {
         self.can_write = false;
         self.frame_buf.clear_resize_to_full();
+        self.payload_pos = 0;
         let mut buf = self.frame_buf.chunk_mut();
         let mut total_len = 0;
 
@@ -1586,26 +1580,60 @@ impl<T: Seek + Read> ZymicStream<T> {
     ///   decryption.
     ///
     fn seek_to_payload_off(&mut self, payload_off: u64) -> Result<(), Error> {
-        let frame_off = self.payload_off_to_frame_off(payload_off)?;
+        let frame_idx = self.payload_off_to_frame_idx(payload_off)?;
+        let frame_off = self.frame_idx_to_frame_off(frame_idx)?;
+        let frame_payload_off = payload_off as usize % self.frame_buf.max_payload_len;
+
         self.inner.seek(SeekFrom::Start(frame_off))?;
         self.seq_num = self
-            .payload_off_to_frame_idx(payload_off)?
-            .checked_add(self.start_seq_num)
+            .start_seq_num
+            .checked_add(frame_idx)
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+        self.end_len = None;
 
-        // Read the frame into the frame buffer at the seek poistion.
+        // A full End Frame represents an EOF whose logical payload offset
+        // falls exactly at the next frame boundary. In that case there is no
+        // Frame at `frame_idx`; authenticate the preceding Frame and accept
+        // its end position only if it is a full End Frame.
         if !self.read_next_frame()? {
-            return Err(Error::new(ErrorKind::UnexpectedEof));
+            if frame_payload_off != 0 || payload_off == 0 {
+                return Err(Error::new(ErrorKind::UnexpectedEof));
+            }
+
+            let previous_frame_idx = frame_idx
+                .checked_sub(1)
+                .ok_or(Error::new(ErrorKind::UnexpectedEof))?;
+            let previous_frame_off = self.frame_idx_to_frame_off(previous_frame_idx)?;
+            self.inner.seek(SeekFrom::Start(previous_frame_off))?;
+            self.seq_num = self
+                .start_seq_num
+                .checked_add(previous_frame_idx)
+                .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+            self.end_len = None;
+
+            if !self.read_next_frame()? || self.end_len != Some(self.frame_buf.max_payload_len) {
+                return Err(Error::new(ErrorKind::UnexpectedEof));
+            }
+
+            self.payload_pos = self.frame_buf.payload_len;
+            return Ok(());
         }
 
-        // The above read_next_frame moves the inner seek position to
-        // the end of the frame. Therefore, we need to call seek back
-        // to the indented position.
-        self.inner.seek(SeekFrom::Start(frame_off))?;
+        // `read_next_frame` leaves the inner reader immediately after the
+        // loaded Frame. Advance the expected sequence number for a Body
+        // Frame so a read crossing the boundary consumes the following
+        // Frame instead of loading this one again.
+        if self.end_len.is_none() {
+            self.seq_num = self
+                .seq_num
+                .checked_add(1)
+                .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+        }
 
-        let payload_off = payload_off as usize % self.frame_buf.max_payload_len;
-        if payload_off < self.frame_buf.payload_len || payload_off == 0 {
-            self.payload_pos = payload_off;
+        if frame_payload_off < self.frame_buf.payload_len
+            || (self.end_len.is_some() && frame_payload_off == self.frame_buf.payload_len)
+        {
+            self.payload_pos = frame_payload_off;
         } else {
             return Err(Error::new(ErrorKind::UnexpectedEof));
         }
@@ -1659,23 +1687,22 @@ impl<T: Seek + Read> Seek for ZymicStream<T> {
                 if !self.read_next_frame()? {
                     return Err(Error::new(ErrorKind::UnexpectedEof).into());
                 }
+                if self.end_len.is_none() {
+                    return Err(Error::new(ErrorKind::Truncation).into());
+                }
                 //
                 // Compute the absolute length of the payload based on
                 // the frame offset and the payload length of the last
                 // frame.
                 //
-                let payload_end_off = self.payload_end_off()?;
-                let abs_payload_len = payload_end_off
-                    .checked_add(u64::from(payload_end_off > 0))
-                    .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
+                let abs_payload_len = self.total_payload_len()?;
 
                 // If the input parameter `abs_payload_off` is 0, then
                 // the returned offset is the length of the
                 // payload. Otherwise, it's an offset value from
                 // [0..n).
                 if payload_off == 0 {
-                    let inner_seek_off = abs_payload_len.saturating_sub(1);
-                    self.seek_to_payload_off(inner_seek_off)?;
+                    self.payload_pos = self.frame_buf.payload_len;
                     abs_payload_len
                 } else {
                     let abs_payload_len = i64::try_from(abs_payload_len)

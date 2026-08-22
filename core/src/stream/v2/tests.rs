@@ -1099,6 +1099,31 @@ fn stream_seek_end_len() {
     stream.eof().unwrap();
     let off = stream.seek(SeekFrom::End(0)).unwrap();
     assert_eq!(off as usize, plain_txt.len());
+
+    let mut buf = [0u8; 1];
+    assert_eq!(stream.read(&mut buf).unwrap(), 0);
+    assert_eq!(stream.stream_position().unwrap(), off);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn stream_seek_end_one_byte() {
+    let parent_key = mock_parent_key();
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let plain_txt = [0x5a];
+
+    let mut stream = ZymicStream::new(Cursor::new(Vec::default()), &header);
+    stream.write_all(&plain_txt).unwrap();
+    stream.eof().unwrap();
+
+    assert_eq!(stream.seek(SeekFrom::End(0)).unwrap(), 1);
+    assert_eq!(stream.stream_position().unwrap(), 1);
+
+    let mut buf = [0u8; 1];
+    assert_eq!(stream.read(&mut buf).unwrap(), 0);
+
+    assert_eq!(stream.seek(SeekFrom::Start(1)).unwrap(), 1);
+    assert_eq!(stream.read(&mut buf).unwrap(), 0);
 }
 
 #[cfg(feature = "std")]
@@ -1190,6 +1215,54 @@ fn stream_seek_multi_frame() {
     let mut buf = vec![0u8; payload_len_per_frame];
     stream.read_exact(&mut buf).unwrap();
     assert!(buf.iter().all(|&v| v == 0xff));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn stream_seek_read_across_frame_boundary() {
+    let parent_key = mock_parent_key();
+    let frame_len = FrameLength::Len4KiB;
+    let payload_len_per_frame = frame_len.as_usize() - FRAME_META_LEN;
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+        .with_frame_len(frame_len)
+        .build();
+    let mut plain_txt = payload_from_frame_count(2, frame_len);
+    plain_txt[..payload_len_per_frame].fill(0x11);
+    plain_txt[payload_len_per_frame..].fill(0x22);
+
+    let mut writer = ZymicStream::new(Vec::default(), &header);
+    writer.write_all(&plain_txt).unwrap();
+    writer.eof().unwrap();
+
+    let mut reader = ZymicStream::new(Cursor::new(writer.into_inner()), &header);
+    let seek_off = payload_len_per_frame as u64 - 2;
+    assert_eq!(reader.seek(SeekFrom::Start(seek_off)).unwrap(), seek_off);
+
+    let mut buf = [0u8; 4];
+    reader.read_exact(&mut buf).unwrap();
+    assert_eq!(buf, [0x11, 0x11, 0x22, 0x22]);
+    assert_eq!(reader.stream_position().unwrap(), seek_off + 4);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn stream_position_after_partial_body_frame_read() {
+    let parent_key = mock_parent_key();
+    let frame_len = FrameLength::Len4KiB;
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+        .with_frame_len(frame_len)
+        .build();
+    let plain_txt = payload_from_frame_count(2, frame_len);
+
+    let mut writer = ZymicStream::new(Vec::default(), &header);
+    writer.write_all(&plain_txt).unwrap();
+    writer.eof().unwrap();
+
+    let mut reader = ZymicStream::new(Cursor::new(writer.into_inner()), &header);
+    let mut buf = [0u8; 7];
+    reader.read_exact(&mut buf).unwrap();
+
+    assert_eq!(reader.stream_position().unwrap(), 7);
 }
 
 #[cfg(feature = "std")]
