@@ -202,10 +202,18 @@ const VERSION: u8 = 2;
 type Aes256Gcm = AesGcm<Aes256, FrameNonceLen>;
 
 #[repr(u16)]
-#[derive(Debug, PartialEq)]
-enum CryptoAlgorithm {
+#[derive(Debug, PartialEq, Clone, Copy)]
+pub enum CryptoAlgorithm {
     /// AES-256-GCM using HKDF-SHA2-256 for data key derivation
     Aes256GcmHkdfSha256 = 0,
+}
+
+impl fmt::Display for CryptoAlgorithm {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        match self {
+            Self::Aes256GcmHkdfSha256 => write!(f, "AES-256-GCM/HKDF-SHA-256"),
+        }
+    }
 }
 
 /// Valid frame lengths.
@@ -1037,6 +1045,26 @@ impl Header {
             data_key,
             bytes,
         })
+    }
+
+    /// Return the stream format version encoded by this header.
+    pub fn version(&self) -> u8 {
+        VERSION
+    }
+
+    /// Return the cryptographic algorithm encoded by this header.
+    pub fn algorithm(&self) -> CryptoAlgorithm {
+        CryptoAlgorithm::Aes256GcmHkdfSha256
+    }
+
+    /// Return the frame length encoded by this header.
+    pub fn frame_len(&self) -> FrameLength {
+        self.frame_len
+    }
+
+    /// Return the parent key identifier bytes encoded by this header.
+    pub fn parent_key_id_bytes(&self) -> &[u8] {
+        &self.bytes[HEADER_KEY_ID_RANGE]
     }
 
     /// Return the serialized header as raw bytes.

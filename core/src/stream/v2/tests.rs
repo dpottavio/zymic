@@ -12,7 +12,7 @@ use crate::{
     error::ErrorKind,
     key::{ParentKey, ParentKeyId, ParentKeySecret},
 };
-use alloc::{vec, vec::Vec};
+use alloc::{format, vec, vec::Vec};
 
 #[cfg(feature = "std")]
 use super::ZymicStream;
@@ -227,6 +227,25 @@ fn header_format() {
         CryptoAlgorithm::Aes256GcmHkdfSha256,
         FrameLength::default(),
     );
+}
+
+/// Test access to the values encoded by a Header instance.
+#[test]
+fn header_getters() {
+    let frame_len = FrameLength::Len32KiB;
+    let parent_key = mock_parent_key();
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+        .with_frame_len(frame_len)
+        .build();
+
+    assert_eq!(header.version(), VERSION);
+    assert_eq!(header.algorithm(), CryptoAlgorithm::Aes256GcmHkdfSha256);
+    assert_eq!(
+        format!("{}", header.algorithm()),
+        "AES-256-GCM/HKDF-SHA-256"
+    );
+    assert_eq!(header.frame_len(), frame_len);
+    assert_eq!(header.parent_key_id_bytes(), parent_key.id().as_slice());
 }
 
 /// Test the version 2 constants and nonce encoding.
