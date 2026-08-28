@@ -3,7 +3,7 @@ use std::time::Duration;
 use zymic_core::{
     byte_array,
     key::ParentKey,
-    stream::{FrameLength, HeaderBuilder, HeaderNonce, ZymicStream},
+    stream::{FrameLength, HeaderBytes, HeaderNonce, ZymicReaderBuilder, ZymicWriterBuilder},
 };
 
 const PLAIN_TXT_LEN: usize = 1 << 27; // 128 MiB
@@ -19,11 +19,9 @@ fn stream_benchmark(c: &mut Criterion) {
     let parent_key = ParentKey::default();
 
     let frame_len = FrameLength::Len16KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
     let frame_len_kib = frame_len.as_usize() / 1024;
-    let cipher_txt_len = PLAIN_TXT_LEN + (PLAIN_TXT_LEN.div_ceil(frame_len.as_usize()) * 24);
+    let cipher_txt_len =
+        HeaderBytes::LEN + PLAIN_TXT_LEN + (PLAIN_TXT_LEN.div_ceil(frame_len.as_usize()) * 24);
 
     #[cfg(feature = "std")]
     {
@@ -35,19 +33,27 @@ fn stream_benchmark(c: &mut Criterion) {
             format!("stream/encoding/frame_size_{}_KiB", frame_len_kib),
             |b| {
                 b.iter(|| {
-                    let mut writer = ZymicStream::new(Vec::with_capacity(cipher_txt_len), &header);
+                    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+                        .with_frame_len(frame_len)
+                        .build(Vec::with_capacity(cipher_txt_len))
+                        .unwrap();
                     let mut reader: &[u8] = &plain_txt;
                     let len = std::io::copy(&mut reader, &mut writer).unwrap();
                     assert!(len > 0);
+                    writer.finish().unwrap();
                 })
             },
         );
 
         let cipher_txt = Vec::with_capacity(cipher_txt_len);
         let mut plain_txt = std::io::Cursor::new(vec![0u8; PLAIN_TXT_LEN]);
-        let mut writer = ZymicStream::new(cipher_txt, &header);
+        let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+            .with_frame_len(frame_len)
+            .build(cipher_txt)
+            .unwrap();
         let len = std::io::copy(&mut plain_txt, &mut writer).unwrap();
         assert!(len > 0);
+        writer.finish().unwrap();
 
         let cipher_txt = writer.into_inner();
         assert!(!cipher_txt.is_empty());
@@ -60,8 +66,10 @@ fn stream_benchmark(c: &mut Criterion) {
             |b| {
                 b.iter(|| {
                     plain_txt.clear();
-                    let mut reader =
-                        ZymicStream::new(std::io::Cursor::new(cipher_txt.clone()), &header);
+                    let cipher_cursor = std::io::Cursor::new(cipher_txt.clone());
+                    let mut reader = ZymicReaderBuilder::new(&parent_key)
+                        .build(cipher_cursor)
+                        .unwrap();
                     let len = std::io::copy(&mut reader, &mut plain_txt).unwrap();
                     assert!(len > 0);
                 })

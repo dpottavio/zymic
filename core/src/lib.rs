@@ -11,13 +11,14 @@
 //! # Getting Started
 //!
 //! If you’re on `std`, start with the [`stream`] module and the
-//! [`ZymicStream`] type, which implements `std::io::{Read, Write,
-//! Seek}` for file-like access.  For embedded / `no_std`
-//! environments, use [`FrameBuf`] to build and parse encrypted frames
-//! directly.
+//! [`ZymicReader`] and [`ZymicWriter`] types, which implement the
+//! appropriate `std::io` traits for file-like access. For embedded /
+//! `no_std` environments, use [`FrameBuf`] to build and parse
+//! encrypted frames directly.
 //!
 //! [`stream`]: crate::stream
-//! [`ZymicStream`]: crate::stream::ZymicStream
+//! [`ZymicReader`]: crate::stream::ZymicReader
+//! [`ZymicWriter`]: crate::stream::ZymicWriter
 //! [`FrameBuf`]: crate::stream::FrameBuf
 //!
 //! # Stream Immutability

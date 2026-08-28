@@ -10,8 +10,8 @@
 //!
 //! ## Format
 //!
-//! A Zymic stream consists of one Header, zero or more Body Frames,
-//! and exactly one End Frame. Frames are strictly ordered; any
+//! A logical Zymic stream consists of one Header, zero or more Body
+//! Frames, and exactly one End. Frames are strictly ordered; any
 //! reordering/removal is detectable during decryption. Each stream
 //! uses a unique Data Key derived from a higher-level Parent Key; the
 //! Parent Key itself never encrypts frames directly.
@@ -27,11 +27,12 @@
 //! Choose an API based on whether the Rust standard library is
 //! available:
 //!
-//! - `std` → use [`ZymicStream`], which implements [`std::io::Read`],
-//!   [`std::io::Write`], and [`std::io::Seek`] over a framed AEAD
-//!   stream. This is the most ergonomic option for file or socket I/O
-//!   on desktop and server systems, and is the recommended type when
-//!   targeting ordinary Rust applications.
+//! - `std` → use [`ZymicReader`] for decryption and [`ZymicWriter`] for
+//!   encryption. They implement the appropriate [`std::io`] traits over a
+//!   framed AEAD stream. A writer generates and owns a fresh stream header;
+//!   it writes that header before the encrypted frames and exposes the
+//!   serialized bytes for additional backup copies. Applications provide a
+//!   unique, cryptographically random header nonce when constructing a writer.
 //!
 //! - `no_std` → use [`FrameBuf`], a lower-level buffer type for
 //!   constructing, encrypting, and decrypting individual frames
@@ -47,7 +48,8 @@
 //! Streams are immutable. See the crate-level
 //! [stream immutability requirements](crate#stream-immutability).
 //!
-//! [`ZymicStream`]: crate::stream::ZymicStream
+//! [`ZymicReader`]: crate::stream::ZymicReader
+//! [`ZymicWriter`]: crate::stream::ZymicWriter
 //! [`FrameBuf`]: crate::stream::FrameBuf
 use crate::{
     bytes::{ByteArray, ByteCursor, ByteCursorMut},
@@ -247,6 +249,10 @@ pub struct Header {
 }
 
 /// Builder for the [`Header`] type.
+///
+/// With the `std` feature, prefer [`ZymicWriterBuilder`], which owns the nonce
+/// while constructing a writer. Reusing the same parent key and nonce to encrypt
+/// different frame sequences compromises confidentiality.
 pub struct HeaderBuilder<'a> {
     parent_key: &'a ParentKey,
     nonce: &'a HeaderNonce,
@@ -282,8 +288,8 @@ pub struct FrameHeaderBuilder {
 /// [`FrameLength`] worth of data.
 ///
 /// This is a lower-level data structure for working with Zymic frames
-/// directly. For bulk encryption/decryption, prefer [`ZymicStream`],
-/// which implements [`Read`] and [`Write`]. If `std` is unavailable,
+/// directly. For bulk encryption/decryption, prefer [`ZymicReader`] and
+/// [`ZymicWriter`], which implement the standard I/O traits. If `std` is unavailable,
 /// or you need finer control, [`FrameBuf`] is the no-std-friendly
 /// alternative.
 ///
@@ -370,7 +376,8 @@ pub struct FrameHeaderBuilder {
 /// [`FrameLength`]: crate::stream::FrameLength
 /// [`Read`]: std::io::Read
 /// [`Write`]: std::io::Write
-/// [`ZymicStream`]: crate::stream::ZymicStream
+/// [`ZymicReader`]: crate::stream::ZymicReader
+/// [`ZymicWriter`]: crate::stream::ZymicWriter
 /// [`commit_chunk_mut`]: Self::commit_chunk_mut
 /// [`copy_from_encrypted_bytes`]: Self::copy_from_encrypted_bytes
 /// [`chunk_mut`]: Self::chunk_mut
@@ -400,98 +407,127 @@ pub struct FrameBuf {
     cipher: Aes256Gcm,
 }
 
-/// Stream implementation of the Zymic AEAD encoding format.
+/// Decrypts and authenticates frames from an existing Zymic stream.
 ///
-/// The stream implements [`Read`], [`Write`], and [`Seek`] over a
-/// Zymic encoded inner type `T` when the `std` feature is enabled.
-/// Writes are supported only while encoding a new Stream. Once the
-/// Stream has been finalized or an existing Frame has been read,
-/// further writes fail because Streams are immutable. See the
-/// crate-level [stream immutability requirements](crate#stream-immutability).
-///
-/// # Usage
-///
-/// On the write path, plain text data is written to the
-/// stream. Encrypted frames are written to the inner type `T`. The
-/// basic usage is as follows:
-///
-/// 1. Write plaintext with [`Write`].
-///
-/// 2. Call [`eof`] to flush the stream and mark the end of the
-///    stream.
-///
-/// 3. The wrapped writer may be recovered with
-///    [`into_inner`].
-///
-/// On the read path plain text data may be read from the underlying
-/// encrypted inner type `T` using [`Read`]. Basic usage is as
-/// follows:
-///
-/// 1. Read plaintext with [`Read`] Data integrity, including frame
-///    reordering is handled internally by the stream type. If data
-///    fails an integrity check or reordering is detected an [`Error`]
-///    is returned.
-///
-/// 2. To detect if a stream has been truncated, the caller must
-///    [`Read`] to the end of the stream and call [`is_eof_or_err`].
-///
-/// [`eof`]: ZymicStream::eof
-/// [`into_inner`]: ZymicStream::into_inner
-/// [`Error`]: crate::Error
-/// [`Read`]: std::io::Read
-/// [`Seek`]: std::io::Seek
-/// [`Write`]: std::io::Write
-/// [`is_eof_or_err`]: ZymicStream::is_eof_or_err
+/// Construct a reader with [`ZymicReaderBuilder`]. By default, the builder
+/// reads and authenticates the inline header from the wrapped input. A detached
+/// header can be supplied when the input contains only encrypted frames.
 ///
 /// # Example
 ///
-///```rust
-/// #
-/// #
+/// ```rust
 /// # {
-/// use std::io::{Cursor, copy};
-/// use zymic_core::{key::ParentKey,
-///     stream::{HeaderBuilder, HeaderNonce, ZymicStream}
+/// use std::io::{copy, Cursor};
+/// use zymic_core::{key::ParentKey, stream::ZymicReaderBuilder};
+/// # use std::io::Write;
+/// # use zymic_core::{stream::{HeaderNonce, ZymicWriterBuilder}, Error};
+/// #
+/// # fn main() -> Result<(), Error> {
+/// # {
+/// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+/// # let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+/// # let mut writer = ZymicWriterBuilder::new(&parent_key, nonce).build(Vec::new())?;
+/// # writer.write_all(b"example")?;
+/// # writer.finish()?;
+/// # let encoded = Cursor::new(writer.into_inner());
+///
+/// let mut reader = ZymicReaderBuilder::new(&parent_key).build(encoded)?;
+/// let mut plaintext = Vec::new();
+/// copy(&mut reader, &mut plaintext)?;
+/// reader.is_eof_or_err()?;
+/// assert_eq!(plaintext, b"example");
+/// # }
+/// # Ok(())
+/// # }
+/// # }
+/// ```
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub struct ZymicReader<T> {
+    core: StreamCore<T>,
+}
+
+/// Configures and constructs a [`ZymicReader`].
+///
+/// By default, [`build`](Self::build) reads the stream header from `inner`.
+/// Use [`with_header`](Self::with_header) when the header is stored separately
+/// and `inner` begins at the first encrypted frame.
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub struct ZymicReaderBuilder<'a> {
+    parent_key: &'a ParentKey,
+    header: Option<HeaderBytes>,
+    seq_num: u32,
+}
+
+/// Configures and constructs a [`ZymicWriter`].
+///
+/// The builder owns the stream nonce and configuration and holds a reference to
+/// the parent key. It is consumed when the writer is built so that each build
+/// produces exactly one header and writer.
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+pub struct ZymicWriterBuilder<'a> {
+    parent_key: &'a ParentKey,
+    nonce: HeaderNonce,
+    frame_len: FrameLength,
+}
+
+/// Encrypts plaintext into a new Zymic stream.
+///
+/// Each writer generates and owns a fresh header so that its data key cannot be
+/// accidentally reused for a second stream. The header is written to `inner`
+/// during construction. Use [`header_bytes`](Self::header_bytes) to store one
+/// or more additional copies elsewhere.
+///
+/// # Example
+///
+/// ```rust
+/// # {
+/// use std::io::copy;
+/// use zymic_core::{
+///     key::ParentKey,
+///     stream::{HeaderNonce, ZymicWriterBuilder},
 /// };
 /// # use zymic_core::Error;
 /// #
 /// # fn main() -> Result<(), Error> {
-/// #
-/// //
-/// // Encrypt a simple Vec
-/// //
-/// let plain_txt = vec![1,2,3,4,5];
-/// let mut plain_cursor = Cursor::new(plain_txt);
+/// # {
 ///
-/// // Fill the parent key and nonce with cryptographically secure
-/// // random data.
 /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
 /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+/// let mut plaintext = &b"example"[..];
+/// let mut writer = ZymicWriterBuilder::new(&parent_key, nonce).build(Vec::new())?;
 ///
-/// let header = HeaderBuilder::new(&parent_key, &nonce).build();
-/// let mut cipher_txt = Vec::default();
-/// let mut writer = ZymicStream::new(cipher_txt, &header);
-/// copy(&mut plain_cursor, &mut writer);
-/// writer.eof()?;
-/// //
-/// // Decrypt the data
-/// //
-/// let cipher_txt = writer.into_inner();
-/// let mut cipher_cursor = Cursor::new(cipher_txt);
-/// let mut decoded_txt = Vec::default();
-/// let mut reader = ZymicStream::new(cipher_cursor, &header);
-/// copy(&mut reader, &mut decoded_txt);
-/// reader.is_eof_or_err()?;
-/// let plain_txt = plain_cursor.into_inner();
-/// assert_eq!(vec![1,2,3,4,5], decoded_txt);
-/// #
+/// // The header has already been written to the output. It can also be
+/// // copied to a backup location.
+/// let backup_header = writer.header_bytes().clone();
+/// copy(&mut plaintext, &mut writer)?;
+/// writer.finish()?;
+///
+/// let encoded = writer.into_inner();
+/// assert!(encoded.starts_with(backup_header.as_slice()));
+/// # }
 /// # Ok(())
 /// # }
 /// # }
-///```
+/// ```
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub struct ZymicStream<T> {
+pub struct ZymicWriter<T> {
+    header: Header,
+    core: StreamCore<T>,
+    /// Whether this writer may still emit encrypted frames.
+    ///
+    /// Finalization or any write failure permanently disables further writes
+    /// so that a possibly exposed frame nonce cannot be reused.
+    can_write: bool,
+}
+
+/// Shared internal implementation for reader and writer frame processing.
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+struct StreamCore<T> {
     /// Sequence number tracker.
     ///
     /// For normal read/write operations, this field always holds the
@@ -506,11 +542,11 @@ pub struct ZymicStream<T> {
     /// May be greater than zero if the stream starts reading from
     /// beyond the first frame.
     start_seq_num: u32,
-    /// Whether this instance may still encode a new stream.
+    /// Absolute byte offset of the first encrypted frame in `inner`.
     ///
-    /// Reading an existing Frame or emitting the End Frame makes the
-    /// stream immutable and permanently disables further writes.
-    can_write: bool,
+    /// This is the serialized header length for an inline-header stream and
+    /// zero when the header is supplied separately.
+    frame_start: u64,
     /// Current byte position in the payload section.
     ///
     /// Updated on each read or write to track the next payload offset.
@@ -933,7 +969,7 @@ impl FrameBuf {
     /// This indicates that the buffer does not yet contain enough
     /// bytes to parse a complete frame header.
     ///
-    /// Currently this is only used by `ZymicStream`.
+    /// Currently this is only used by the std stream reader and writer.
     #[cfg(any(feature = "std", test))]
     fn is_partial(&self) -> bool {
         self.buf.len() < FRAME_HEADER_LEN
@@ -989,9 +1025,12 @@ impl Header {
     /// Parse and validate a [`Header`] from its serialized byte form.
     ///
     /// This function decodes the raw [`HeaderBytes`] produced by
-    /// serialization and validates it against the provided [`ParentKey`].
-    /// On success it returns a new [`Header`] containing the derived
-    /// Data Key and associated parameters.
+    /// serialization and validates it against the provided
+    /// [`ParentKey`].  On success it returns a new [`Header`]
+    /// containing the derived Data Key and associated
+    /// parameters. Serialized header bytes may be reused by
+    /// [`ZymicReaderBuilder`] instances; the [`ZymicWriter`] API does not
+    /// accept existing headers for encryption.
     ///
     /// # Errors
     ///
@@ -1182,7 +1221,7 @@ impl FrameHeaderBuilder {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T> ZymicStream<T> {
+impl<T> StreamCore<T> {
     /// Create a new instance starting at sequence number 0.
     ///
     /// The stream’s frame sizing and data key are taken from
@@ -1193,7 +1232,7 @@ impl<T> ZymicStream<T> {
     /// a non‑zero sequence number.
     ///
     /// [`new_with_seq_num`]: Self::new_with_seq_num
-    pub fn new(inner: T, header: &Header) -> Self {
+    fn new(inner: T, header: &Header) -> Self {
         Self::new_with_seq_num(inner, header, 0)
     }
 
@@ -1203,13 +1242,23 @@ impl<T> ZymicStream<T> {
     /// example, when continuing decryption at a checkpoint or
     /// appending frames when you already know the next sequence
     /// number.
-    pub fn new_with_seq_num(inner: T, header: &Header, seq_num: u32) -> Self {
+    fn new_with_seq_num(inner: T, header: &Header, seq_num: u32) -> Self {
+        Self::new_with_seq_num_and_frame_start(inner, header, seq_num, 0)
+    }
+
+    /// Create an instance with an explicit first-frame byte offset.
+    fn new_with_seq_num_and_frame_start(
+        inner: T,
+        header: &Header,
+        seq_num: u32,
+        frame_start: u64,
+    ) -> Self {
         let frame_buf = FrameBuf::new(header);
 
         Self {
             seq_num,
             start_seq_num: seq_num,
-            can_write: true,
+            frame_start,
             payload_pos: 0,
             end_len: None,
             frame_buf,
@@ -1221,12 +1270,12 @@ impl<T> ZymicStream<T> {
     ///
     /// This is useful when you need to recover ownership of the
     /// underlying reader or writer after finishing with the stream.
-    pub fn into_inner(self) -> T {
+    fn into_inner(self) -> T {
         self.inner
     }
 
     /// Return true if the stream has reached its End Frame.
-    pub fn is_eof(&self) -> bool {
+    fn is_eof(&self) -> bool {
         self.end_len
             .map_or_else(|| false, |end_len| self.payload_pos == end_len)
     }
@@ -1238,7 +1287,7 @@ impl<T> ZymicStream<T> {
     /// that the stream was truncated or is otherwise incomplete.
     ///
     /// [`Error`]: crate::error::Error
-    pub fn is_eof_or_err(&self) -> Result<(), Error> {
+    fn is_eof_or_err(&self) -> Result<(), Error> {
         if self.is_eof() {
             Ok(())
         } else {
@@ -1254,6 +1303,7 @@ impl<T> ZymicStream<T> {
     fn frame_idx_to_frame_off(&self, frame_idx: u32) -> Result<u64, Error> {
         let frame_off = (frame_idx as u64)
             .checked_mul(self.frame_buf.frame_len as u64)
+            .and_then(|offset| offset.checked_add(self.frame_start))
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
 
         Ok(frame_off)
@@ -1265,7 +1315,10 @@ impl<T> ZymicStream<T> {
     /// frame.
     #[inline]
     fn byte_off_to_frame_idx(&self, abs_off: u64) -> Result<u32, Error> {
-        let frame_idx = abs_off / self.frame_buf.frame_len as u64;
+        let frame_off = abs_off
+            .checked_sub(self.frame_start)
+            .ok_or(Error::new(ErrorKind::UnexpectedEof))?;
+        let frame_idx = frame_off / self.frame_buf.frame_len as u64;
 
         Ok(u32::try_from(frame_idx)?)
     }
@@ -1279,6 +1332,14 @@ impl<T> ZymicStream<T> {
         let frame_idx = payload_offset / self.frame_buf.max_payload_len as u64;
 
         Ok(u32::try_from(frame_idx)?)
+    }
+
+    /// Convert a payload offset into its position within a frame payload.
+    #[inline]
+    fn payload_off_to_frame_payload_off(&self, payload_offset: u64) -> Result<usize, Error> {
+        let frame_payload_offset = payload_offset % self.frame_buf.max_payload_len as u64;
+
+        Ok(usize::try_from(frame_payload_offset)?)
     }
 
     /// Return the current absolute payload offset.
@@ -1313,9 +1374,8 @@ impl<T> ZymicStream<T> {
         // On the read path, `seq_num` advances immediately after a Body
         // Frame is loaded, while `frame_buf` continues to expose that
         // Frame's payload. Account for that difference when computing the
-        // logical position. Do not apply it while encoding a stream, where
-        // `seq_num` still identifies the buffered Frame.
-        if !self.can_write && self.end_len.is_none() && self.frame_buf.payload_len > 0 {
+        // logical position.
+        if self.end_len.is_none() && self.frame_buf.payload_len > 0 {
             frame_idx.saturating_sub(1)
         } else {
             frame_idx
@@ -1332,11 +1392,151 @@ impl<T> ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T> ZymicStream<T> {}
+impl<T> ZymicReader<T> {
+    /// Consume this reader and return the wrapped input.
+    pub fn into_inner(self) -> T {
+        self.core.into_inner()
+    }
+
+    /// Return `true` once an authenticated End Frame has been fully consumed.
+    pub fn is_eof(&self) -> bool {
+        self.core.is_eof()
+    }
+
+    /// Confirm that an authenticated End Frame was reached.
+    ///
+    /// Call this after reading to EOF to distinguish a complete stream from a
+    /// truncated one.
+    pub fn is_eof_or_err(&self) -> Result<(), Error> {
+        self.core.is_eof_or_err()
+    }
+}
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Write> ZymicStream<T> {
+impl<'a> ZymicReaderBuilder<'a> {
+    /// Create a reader builder that expects an inline header and sequence
+    /// number zero.
+    pub fn new(parent_key: &'a ParentKey) -> Self {
+        Self {
+            parent_key,
+            header: None,
+            seq_num: 0,
+        }
+    }
+
+    /// Use a separately stored header.
+    ///
+    /// When this is set, `inner` must begin at the first encrypted frame; the
+    /// builder does not consume header bytes from it.
+    pub fn with_header(mut self, header: HeaderBytes) -> Self {
+        self.header = Some(header);
+        self
+    }
+
+    /// Set the expected sequence number of the first frame in `inner`.
+    pub fn with_seq_num(mut self, seq_num: u32) -> Self {
+        self.seq_num = seq_num;
+        self
+    }
+
+    /// Read and authenticate the header, then build the reader.
+    ///
+    /// Unless [`with_header`](Self::with_header) was called, `inner` must
+    /// begin with an inline Zymic header. For seekable inputs, byte offset zero
+    /// must be the start of either that inline header or the first encrypted
+    /// frame when using a detached header.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if an inline header cannot be read or if the selected
+    /// header fails authentication.
+    pub fn build<T: Read>(self, mut inner: T) -> Result<ZymicReader<T>, Error> {
+        let (header_bytes, frame_start) = match self.header {
+            Some(header_bytes) => (header_bytes, 0),
+            None => {
+                let mut header_bytes = HeaderBytes::default();
+                inner.read_exact(&mut header_bytes)?;
+                (header_bytes, HeaderBytes::LEN as u64)
+            }
+        };
+        let header = Header::from_bytes(self.parent_key, header_bytes)?;
+        let core =
+            StreamCore::new_with_seq_num_and_frame_start(inner, &header, self.seq_num, frame_start);
+
+        Ok(ZymicReader { core })
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<'a> ZymicWriterBuilder<'a> {
+    /// Create a writer builder with a caller-provided nonce and the default
+    /// frame length.
+    ///
+    /// # Security
+    ///
+    /// The `(parent_key, nonce)` pair must never have been used to encrypt a
+    /// different stream. The nonce should be generated using a
+    /// cryptographically secure random source.
+    pub fn new(parent_key: &'a ParentKey, nonce: HeaderNonce) -> Self {
+        Self {
+            parent_key,
+            nonce,
+            frame_len: FrameLength::default(),
+        }
+    }
+
+    /// Set the stream frame length.
+    pub fn with_frame_len(mut self, frame_len: FrameLength) -> Self {
+        self.frame_len = frame_len;
+        self
+    }
+
+    /// Build a writer and write its generated header to `inner`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header cannot be written to `inner`.
+    pub fn build<T>(self, mut inner: T) -> Result<ZymicWriter<T>, Error>
+    where
+        T: Write,
+    {
+        let header = HeaderBuilder::new(self.parent_key, &self.nonce)
+            .with_frame_len(self.frame_len)
+            .build();
+        inner.write_all(header.bytes())?;
+        let core = StreamCore::new(inner, &header);
+        Ok(ZymicWriter {
+            header,
+            core,
+            can_write: true,
+        })
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<T> ZymicWriter<T> {
+    /// Return the serialized header written to this encrypted stream.
+    ///
+    /// The bytes may be copied to multiple backup locations. Every copy must
+    /// remain associated with the frames emitted by this writer.
+    pub fn header_bytes(&self) -> &HeaderBytes {
+        self.header.bytes()
+    }
+
+    /// Consume this writer and return the wrapped output.
+    ///
+    /// This does not finalize the stream. Call [`finish`](Self::finish) first.
+    pub fn into_inner(self) -> T {
+        self.core.into_inner()
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<T: Write> StreamCore<T> {
     /// Finalize the stream by encrypting and writing its End Frame.
     ///
     /// The End Frame marks the logical end of a Zymic stream. This
@@ -1348,18 +1548,11 @@ impl<T: Write> ZymicStream<T> {
     ///
     /// # Errors
     ///
-    /// Returns an [`Error`] if writing to or flushing the inner
-    /// target fails, or if the Stream has already been finalized or
-    /// read and is therefore immutable.
+    /// Returns an [`Error`] if writing to or flushing the inner target fails.
     ///
     /// [`Write`]: std::io::Write
     /// [`Error`]: crate::error::Error
-    pub fn eof(&mut self) -> Result<(), Error> {
-        if !self.can_write {
-            return Err(Error::new(ErrorKind::StreamImmutable));
-        }
-
-        self.can_write = false;
+    fn eof(&mut self) -> Result<(), Error> {
         self.frame_buf
             .encrypt(&FrameHeaderBuilder::new(self.seq_num).end().build());
         self.inner.write_all(self.frame_buf.as_ref())?;
@@ -1375,7 +1568,26 @@ impl<T: Write> ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Read> ZymicStream<T> {
+impl<T: Write> ZymicWriter<T> {
+    /// Finalize the stream by encrypting and writing its End Frame.
+    ///
+    /// This also flushes the wrapped writer. A stream that is not finalized is
+    /// considered truncated by [`ZymicReader`].
+    pub fn finish(&mut self) -> Result<(), Error> {
+        if !self.can_write {
+            return Err(Error::new(ErrorKind::StreamImmutable));
+        }
+
+        // Disable retries before emitting the End Frame. A failed write or
+        // flush may still have exposed its nonce and ciphertext.
+        self.can_write = false;
+        self.core.eof()
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<T: Read> StreamCore<T> {
     /// Read the next frame of the stream and decrypt the payload
     /// section in-place.
     ///
@@ -1394,7 +1606,6 @@ impl<T: Read> ZymicStream<T> {
     ///
     /// * Integrity check failure during decryption.
     fn read_next_frame(&mut self) -> Result<bool, Error> {
-        self.can_write = false;
         self.frame_buf.clear_resize_to_full();
         self.payload_pos = 0;
         let mut buf = self.frame_buf.chunk_mut();
@@ -1426,7 +1637,7 @@ impl<T: Read> ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Read> Read for ZymicStream<T> {
+impl<T: Read> Read for StreamCore<T> {
     /// Read decrypted plaintext bytes from the stream into the
     /// internal frame buffer.
     ///
@@ -1487,7 +1698,15 @@ impl<T: Read> Read for ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Write> Write for ZymicStream<T> {
+impl<T: Read> Read for ZymicReader<T> {
+    fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
+        self.core.read(buf)
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<T: Write> Write for StreamCore<T> {
     /// Write and encrypt plaintext bytes to the stream.
     ///
     /// This implementation transparently handles frame boundaries:
@@ -1499,15 +1718,10 @@ impl<T: Write> Write for ZymicStream<T> {
     ///
     /// # Errors
     ///
-    /// Returns an [`std::io::Error`] if the underlying write fails or
-    /// if the Stream has already been finalized or read and is
-    /// therefore immutable.
+    /// Returns an [`std::io::Error`] if the underlying write fails.
     fn write(&mut self, mut buf: &[u8]) -> Result<usize, std::io::Error> {
         if buf.is_empty() {
             return Ok(0);
-        }
-        if !self.can_write {
-            return Err(Error::new(ErrorKind::StreamImmutable).into());
         }
 
         let mut total_len = 0;
@@ -1524,12 +1738,7 @@ impl<T: Write> Write for ZymicStream<T> {
                     .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
                 self.frame_buf
                     .encrypt(&FrameHeaderBuilder::new(self.seq_num).build());
-                if let Err(err) = self.inner.write_all(self.frame_buf.as_ref()) {
-                    // A partial write may have exposed this nonce, so the
-                    // Frame cannot be encrypted or emitted again safely.
-                    self.can_write = false;
-                    return Err(err);
-                }
+                self.inner.write_all(self.frame_buf.as_ref())?;
                 self.frame_buf.clear();
                 self.seq_num = next_seq_num;
                 self.payload_pos = 0;
@@ -1549,13 +1758,13 @@ impl<T: Write> Write for ZymicStream<T> {
     /// closing the stream.
     ///
     /// To close the stream and ensure all encrypted data is written
-    /// and flushed, call [`ZymicStream::eof`].
+    /// and flushed, call [`ZymicWriter::finish`].
     ///
     /// # Errors
     ///
     /// This method never returns an error.
     ///
-    /// [`ZymicStream::eof`]: crate::stream::ZymicStream::eof
+    /// [`ZymicWriter::finish`]: crate::stream::ZymicWriter::finish
     fn flush(&mut self) -> Result<(), std::io::Error> {
         Ok(())
     }
@@ -1563,7 +1772,34 @@ impl<T: Write> Write for ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Seek + Read> ZymicStream<T> {
+impl<T: Write> Write for ZymicWriter<T> {
+    fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
+        if buf.is_empty() {
+            return Ok(0);
+        }
+        if !self.can_write {
+            return Err(Error::new(ErrorKind::StreamImmutable).into());
+        }
+
+        // Disable writes before delegating so that an unwind from the wrapped
+        // writer also leaves this writer poisoned. A partial write may have
+        // exposed the current nonce and ciphertext.
+        self.can_write = false;
+        let result = self.core.write(buf);
+        if result.is_ok() {
+            self.can_write = true;
+        }
+        result
+    }
+
+    fn flush(&mut self) -> Result<(), std::io::Error> {
+        self.core.flush()
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<T: Seek + Read> StreamCore<T> {
     /// Seek to an payload offset position.
     ///
     /// This positions the stream at `payload_off` within the logical
@@ -1582,7 +1818,7 @@ impl<T: Seek + Read> ZymicStream<T> {
     fn seek_to_payload_off(&mut self, payload_off: u64) -> Result<(), Error> {
         let frame_idx = self.payload_off_to_frame_idx(payload_off)?;
         let frame_off = self.frame_idx_to_frame_off(frame_idx)?;
-        let frame_payload_off = payload_off as usize % self.frame_buf.max_payload_len;
+        let frame_payload_off = self.payload_off_to_frame_payload_off(payload_off)?;
 
         self.inner.seek(SeekFrom::Start(frame_off))?;
         self.seq_num = self
@@ -1644,7 +1880,7 @@ impl<T: Seek + Read> ZymicStream<T> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<T: Seek + Read> Seek for ZymicStream<T> {
+impl<T: Seek + Read> Seek for StreamCore<T> {
     /// Seek to a position within the stream.
     ///
     /// The `pos` argument corresponds to a position of plaintext
@@ -1737,6 +1973,14 @@ impl<T: Seek + Read> Seek for ZymicStream<T> {
         };
 
         Ok(payload_off)
+    }
+}
+
+#[cfg(feature = "std")]
+#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
+impl<T: Seek + Read> Seek for ZymicReader<T> {
+    fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
+        self.core.seek(pos)
     }
 }
 

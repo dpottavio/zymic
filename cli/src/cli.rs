@@ -18,7 +18,8 @@ use zeroize::Zeroizing;
 use zymic_core::{
     key::{ParentKey, ParentKeyId, ParentKeySecret},
     stream::{
-        CryptoAlgorithm, FrameLength, Header, HeaderBuilder, HeaderBytes, HeaderNonce, ZymicStream,
+        CryptoAlgorithm, FrameLength, Header, HeaderBytes, HeaderNonce, ZymicReaderBuilder,
+        ZymicWriterBuilder,
     },
 };
 
@@ -422,12 +423,8 @@ where
     R: io::Read + ?Sized,
     W: io::Write + ?Sized,
 {
-    let mut header_bytes = HeaderBytes::default();
-    input.read_exact(&mut header_bytes)?;
-    let header = Header::from_bytes(key, header_bytes)?;
-
     let mut buf_writer = io::BufWriter::new(output);
-    let mut reader = ZymicStream::new(input, &header);
+    let mut reader = ZymicReaderBuilder::new(key).build(input)?;
     io::copy(&mut reader, &mut buf_writer)?;
     reader.is_eof_or_err()?;
     buf_writer.flush()?;
@@ -567,20 +564,15 @@ pub fn handle_input() -> Result<(), Error> {
             let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
             let parent_key = key_file.unwrap(&password)?;
 
-            let mut io_args = enc_args_to_io(args.file, args.output, args.force)?;
-
+            let io_args = enc_args_to_io(args.file, args.output, args.force)?;
             let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
 
-            let header = HeaderBuilder::new(&parent_key, &nonce)
+            let mut writer = ZymicWriterBuilder::new(&parent_key, nonce)
                 .with_frame_len(FrameLength::Len64KiB)
-                .build();
-            let header_bytes = header.bytes();
-            io_args.output.write_all(header_bytes)?;
-
-            let mut writer = ZymicStream::new(io_args.output, &header);
+                .build(io_args.output)?;
             let mut buf_reader = io::BufReader::new(io_args.input);
             io::copy(&mut buf_reader, &mut writer)?;
-            writer.eof()?;
+            writer.finish()?;
         }
         Command::Info(args) => {
             let mut input = fs::OpenOptions::new().read(true).open(args.file)?;

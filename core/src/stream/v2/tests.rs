@@ -15,7 +15,7 @@ use crate::{
 use alloc::{format, vec, vec::Vec};
 
 #[cfg(feature = "std")]
-use super::ZymicStream;
+use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriterBuilder};
 
 #[cfg(feature = "std")]
 use crate::error::Error;
@@ -198,14 +198,14 @@ fn stream_io_copy(alignment: usize) {
             .with_frame_len(frame_len)
             .build();
 
-        let mut zym_writer = ZymicStream::new(Vec::default(), &header);
+        let mut zym_writer = StreamCore::new(Vec::default(), &header);
         std::io::copy(&mut plain_txt_reader, &mut zym_writer).unwrap();
         zym_writer.eof().unwrap();
         let cipher_txt = zym_writer.into_inner();
 
         validate_stream_body(&cipher_txt, plain_txt_len, frame_len);
 
-        let mut zym_reader = ZymicStream::new(Cursor::new(cipher_txt), &header);
+        let mut zym_reader = StreamCore::new(Cursor::new(cipher_txt), &header);
         let mut plain_txt = Vec::default();
         std::io::copy(&mut zym_reader, &mut plain_txt).unwrap();
         assert!(zym_reader.is_eof());
@@ -890,7 +890,7 @@ fn stream_write() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cipher_txt: Vec<u8> = Vec::default();
 
-    let mut stream = ZymicStream::new(cipher_txt, &header);
+    let mut stream = StreamCore::new(cipher_txt, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
     assert!(stream.is_eof());
@@ -913,7 +913,7 @@ fn stream_max_seq_end() {
     let plain_txt = payload_from_frame_count(2, frame_len);
     let start_seq_num = u32::MAX - 1;
 
-    let mut writer = ZymicStream::new_with_seq_num(Vec::new(), &header, start_seq_num);
+    let mut writer = StreamCore::new_with_seq_num(Vec::new(), &header, start_seq_num);
     writer.write_all(&plain_txt).unwrap();
     writer.eof().unwrap();
 
@@ -930,7 +930,7 @@ fn stream_max_seq_end() {
     assert!(frames.next().is_none());
     assert!(frames.remainder().is_empty());
 
-    let mut reader = ZymicStream::new_with_seq_num(Cursor::new(cipher_txt), &header, start_seq_num);
+    let mut reader = StreamCore::new_with_seq_num(Cursor::new(cipher_txt), &header, start_seq_num);
     let mut decoded = Vec::new();
     reader.read_to_end(&mut decoded).unwrap();
     reader.is_eof_or_err().unwrap();
@@ -947,7 +947,7 @@ fn stream_max_seq_body_err() {
         .build();
     let plain_txt = payload_from_frame_count(1, frame_len);
 
-    let mut stream = ZymicStream::new_with_seq_num(Vec::new(), &header, u32::MAX);
+    let mut stream = StreamCore::new_with_seq_num(Vec::new(), &header, u32::MAX);
     stream.write_all(&plain_txt).unwrap();
     assert!(stream.inner.is_empty());
 
@@ -971,7 +971,7 @@ fn stream_write_read_eof() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
     assert!(stream.is_eof());
@@ -986,20 +986,20 @@ fn stream_write_read_eof() {
 #[test]
 fn stream_write_after_eof_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
-    stream.write_all(&plain_txt).unwrap();
-    stream.eof().unwrap();
-    assert!(stream.is_eof());
+    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+        .build(cursor)
+        .unwrap();
+    writer.write_all(&plain_txt).unwrap();
+    writer.finish().unwrap();
 
-    let err = stream.write(&plain_txt).unwrap_err();
+    let err = writer.write(&plain_txt).unwrap_err();
     let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
     assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
 
-    let err = stream.eof().unwrap_err();
+    let err = writer.finish().unwrap_err();
     assert!(matches!(err.kind(), ErrorKind::StreamImmutable));
 }
 
@@ -1011,7 +1011,7 @@ fn stream_seek_read() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1024,6 +1024,23 @@ fn stream_seek_read() {
 
 #[cfg(feature = "std")]
 #[test]
+fn stream_frame_payload_offset_large_offsets() {
+    let parent_key = mock_parent_key();
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let stream = StreamCore::new(Cursor::new(Vec::<u8>::new()), &header);
+    let payload_off = u32::MAX as u64 + 123;
+    let expected = (payload_off % stream.frame_buf.max_payload_len as u64) as usize;
+
+    assert_eq!(
+        stream
+            .payload_off_to_frame_payload_off(payload_off)
+            .unwrap(),
+        expected
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
 fn stream_read_eof() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
@@ -1032,40 +1049,16 @@ fn stream_read_eof() {
         .build();
     let plain_txt = payload_from_frame_count(4, frame_len);
 
-    let mut stream = ZymicStream::new(Vec::default(), &header);
+    let mut stream = StreamCore::new(Vec::default(), &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
     let cipher_txt = stream.into_inner();
 
-    let mut stream = ZymicStream::new(Cursor::new(cipher_txt), &header);
+    let mut stream = StreamCore::new(Cursor::new(cipher_txt), &header);
     let mut buf = vec![0u8; plain_txt.len()];
     stream.read_exact(&mut buf).unwrap();
     assert!(stream.is_eof());
-}
-
-#[cfg(feature = "std")]
-#[test]
-fn stream_seek_write_err() {
-    let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
-    let plain_txt = vec![1, 2, 3, 4, 5];
-    let cursor = Cursor::new(Vec::default());
-
-    let mut stream = ZymicStream::new(cursor, &header);
-    stream.write_all(&plain_txt).unwrap();
-    stream.eof().unwrap();
-
-    stream.seek(SeekFrom::Start(2)).unwrap();
-    assert_eq!(stream.payload_pos, 2);
-
-    let err = stream.write(&[6, 7, 8]).unwrap_err();
-    let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
-    assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
-
-    let mut buf = vec![0u8; 3];
-    stream.read_exact(&mut buf).unwrap();
-    assert_eq!(buf, vec![3, 4, 5]);
 }
 
 #[cfg(feature = "std")]
@@ -1076,7 +1069,7 @@ fn stream_seek_end() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1100,7 +1093,7 @@ fn stream_seek_end_len() {
     let plain_txt = payload_from_frame_count(4, frame_len);
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
     let off = stream.seek(SeekFrom::End(0)).unwrap();
@@ -1118,7 +1111,7 @@ fn stream_seek_end_one_byte() {
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
     let plain_txt = [0x5a];
 
-    let mut stream = ZymicStream::new(Cursor::new(Vec::default()), &header);
+    let mut stream = StreamCore::new(Cursor::new(Vec::default()), &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1140,7 +1133,7 @@ fn stream_seek_current() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
     stream.rewind().unwrap();
@@ -1161,7 +1154,7 @@ fn stream_seek_empty_payload() {
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&[]).unwrap();
     stream.eof().unwrap();
 
@@ -1188,7 +1181,7 @@ fn stream_seek_multi_frame() {
     let mut plain_txt = payload_from_frame_count(2, frame_len);
     plain_txt[payload_len_per_frame..].fill(0xff);
 
-    let mut stream = ZymicStream::new(Cursor::new(Vec::default()), &header);
+    let mut stream = StreamCore::new(Cursor::new(Vec::default()), &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1236,11 +1229,11 @@ fn stream_seek_read_across_frame_boundary() {
     plain_txt[..payload_len_per_frame].fill(0x11);
     plain_txt[payload_len_per_frame..].fill(0x22);
 
-    let mut writer = ZymicStream::new(Vec::default(), &header);
+    let mut writer = StreamCore::new(Vec::default(), &header);
     writer.write_all(&plain_txt).unwrap();
     writer.eof().unwrap();
 
-    let mut reader = ZymicStream::new(Cursor::new(writer.into_inner()), &header);
+    let mut reader = StreamCore::new(Cursor::new(writer.into_inner()), &header);
     let seek_off = payload_len_per_frame as u64 - 2;
     assert_eq!(reader.seek(SeekFrom::Start(seek_off)).unwrap(), seek_off);
 
@@ -1260,11 +1253,11 @@ fn stream_position_after_partial_body_frame_read() {
         .build();
     let plain_txt = payload_from_frame_count(2, frame_len);
 
-    let mut writer = ZymicStream::new(Vec::default(), &header);
+    let mut writer = StreamCore::new(Vec::default(), &header);
     writer.write_all(&plain_txt).unwrap();
     writer.eof().unwrap();
 
-    let mut reader = ZymicStream::new(Cursor::new(writer.into_inner()), &header);
+    let mut reader = StreamCore::new(Cursor::new(writer.into_inner()), &header);
     let mut buf = [0u8; 7];
     reader.read_exact(&mut buf).unwrap();
 
@@ -1279,7 +1272,7 @@ fn stream_seek_unexpected_eof_err() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1313,7 +1306,7 @@ fn stream_seek_invalid_err() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut stream = ZymicStream::new(cursor, &header);
+    let mut stream = StreamCore::new(cursor, &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1340,14 +1333,14 @@ fn stream_seq_num_err() {
         .build();
     let plain_txt = payload_from_frame_count(4, frame_len);
 
-    let mut stream = ZymicStream::new(Vec::default(), &header);
+    let mut stream = StreamCore::new(Vec::default(), &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
     let mut cipher_txt = stream.into_inner();
     swap_frames(&mut cipher_txt, frame_len, 2, 3);
 
-    let mut stream = ZymicStream::new(Cursor::new(cipher_txt), &header);
+    let mut stream = StreamCore::new(Cursor::new(cipher_txt), &header);
     let mut buf = vec![0u8; plain_txt.len()];
 
     if let Err(e) = stream.read_exact(&mut buf) {
@@ -1368,14 +1361,14 @@ fn stream_seq_num_err_2() {
         .build();
     let plain_txt = payload_from_frame_count(4, frame_len);
 
-    let mut stream = ZymicStream::new(Vec::default(), &header);
+    let mut stream = StreamCore::new(Vec::default(), &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
     let mut cipher_txt = stream.into_inner();
     swap_frames(&mut cipher_txt, frame_len, 1, 2);
 
-    let mut stream = ZymicStream::new(Cursor::new(cipher_txt), &header);
+    let mut stream = StreamCore::new(Cursor::new(cipher_txt), &header);
     let mut buf = vec![0u8; plain_txt.len()];
 
     if let Err(e) = stream.read_exact(&mut buf) {
@@ -1396,7 +1389,7 @@ fn stream_truncated_err() {
         .build();
     let plain_txt = payload_from_frame_count(4, frame_len);
 
-    let mut stream = ZymicStream::new(Vec::default(), &header);
+    let mut stream = StreamCore::new(Vec::default(), &header);
     stream.write_all(&plain_txt).unwrap();
     stream.eof().unwrap();
 
@@ -1405,7 +1398,7 @@ fn stream_truncated_err() {
 
     // Try to read the first 3 frames and detect that the 4th was
     // trucated.
-    let mut stream = ZymicStream::new(Cursor::new(cipher_txt), &header);
+    let mut stream = StreamCore::new(Cursor::new(cipher_txt), &header);
     let mut buf = vec![0u8; plain_txt.len() - frame_len.as_usize()];
     stream.read_exact(&mut buf).unwrap();
     assert!(!stream.is_eof());
@@ -1421,4 +1414,221 @@ fn stream_io_copy_aligned() {
 #[test]
 fn stream_io_copy_unaligned() {
     stream_io_copy(317);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn writer_uses_provided_nonce() {
+    let parent_key = mock_parent_key();
+    let second_nonce = byte_array![4u8; {HeaderNonce::LEN}];
+    let first = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+        .build(Vec::<u8>::new())
+        .unwrap();
+    let second = ZymicWriterBuilder::new(&parent_key, second_nonce)
+        .build(Vec::<u8>::new())
+        .unwrap();
+
+    assert!(first.header_bytes() != second.header_bytes());
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn inline_header_and_backup_round_trip() {
+    let parent_key = mock_parent_key();
+    let plain_txt = b"inline header backup";
+    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+        .with_frame_len(FrameLength::Len4KiB)
+        .build(Vec::new())
+        .unwrap();
+    let primary_header = writer.header_bytes().clone();
+    let backup_header = writer.header_bytes().clone();
+
+    writer.write_all(plain_txt).unwrap();
+    writer.finish().unwrap();
+    let cipher_txt = writer.into_inner();
+
+    assert_eq!(primary_header, backup_header);
+    assert_eq!(&cipher_txt[..HeaderBytes::LEN], primary_header.as_slice());
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .build(Cursor::new(cipher_txt))
+        .unwrap();
+    let mut decoded = Vec::new();
+    reader.read_to_end(&mut decoded).unwrap();
+    reader.is_eof_or_err().unwrap();
+    assert_eq!(decoded, plain_txt);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn detached_header_round_trip() {
+    let parent_key = mock_parent_key();
+    let plain_txt = b"detached header";
+    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+        .with_frame_len(FrameLength::Len4KiB)
+        .build(Vec::new())
+        .unwrap();
+    let header_bytes = writer.header_bytes().clone();
+
+    writer.write_all(plain_txt).unwrap();
+    writer.finish().unwrap();
+    let cipher_txt = writer.into_inner();
+    let frames = cipher_txt[HeaderBytes::LEN..].to_vec();
+
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .with_header(header_bytes)
+        .build(Cursor::new(frames))
+        .unwrap();
+    let mut decoded = Vec::new();
+    reader.read_to_end(&mut decoded).unwrap();
+    reader.is_eof_or_err().unwrap();
+    assert_eq!(decoded, plain_txt);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn reader_builder_sets_initial_seq_num() {
+    let parent_key = mock_parent_key();
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
+        .with_frame_len(FrameLength::Len4KiB)
+        .build();
+    let start_seq_num = 42;
+    let plain_txt = b"checkpoint data";
+    let mut writer = StreamCore::new_with_seq_num(Vec::new(), &header, start_seq_num);
+    writer.write_all(plain_txt).unwrap();
+    writer.eof().unwrap();
+
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .with_header(header.bytes().clone())
+        .with_seq_num(start_seq_num)
+        .build(Cursor::new(writer.into_inner()))
+        .unwrap();
+    let mut decoded = Vec::new();
+    reader.read_to_end(&mut decoded).unwrap();
+    reader.is_eof_or_err().unwrap();
+    assert_eq!(decoded, plain_txt);
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn inline_header_reader_seek_uses_frame_origin() {
+    let parent_key = mock_parent_key();
+    let frame_len = FrameLength::Len4KiB;
+    let plain_txt = payload_from_frame_count(3, frame_len);
+    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
+        .with_frame_len(frame_len)
+        .build(Vec::new())
+        .unwrap();
+    writer.write_all(&plain_txt).unwrap();
+    writer.finish().unwrap();
+
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .build(Cursor::new(writer.into_inner()))
+        .unwrap();
+    let seek_off = (frame_len.as_usize() - FRAME_META_LEN + 17) as u64;
+    assert_eq!(reader.seek(SeekFrom::Start(seek_off)).unwrap(), seek_off);
+    let mut decoded = Vec::new();
+    reader.read_to_end(&mut decoded).unwrap();
+    assert_eq!(decoded, plain_txt[seek_off as usize..]);
+    assert_eq!(
+        reader.seek(SeekFrom::End(0)).unwrap(),
+        plain_txt.len() as u64
+    );
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn writer_builder_propagates_header_write_failure() {
+    struct FailingWriter;
+
+    impl Write for FailingWriter {
+        fn write(&mut self, _buf: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::Error::other("header write failed"))
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let result = ZymicWriterBuilder::new(&mock_parent_key(), TEST_NONCE)
+        .with_frame_len(FrameLength::Len4KiB)
+        .build(FailingWriter);
+
+    assert!(result.is_err());
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn writer_failure_disables_further_writes() {
+    struct FailAfterHeader {
+        header_written: bool,
+    }
+
+    impl Write for FailAfterHeader {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.header_written {
+                Err(std::io::Error::other("frame write failed"))
+            } else {
+                self.header_written = true;
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let frame_len = FrameLength::Len4KiB;
+    let mut writer = ZymicWriterBuilder::new(&mock_parent_key(), TEST_NONCE)
+        .with_frame_len(frame_len)
+        .build(FailAfterHeader {
+            header_written: false,
+        })
+        .unwrap();
+
+    assert!(writer.write_all(&vec![0; frame_len.as_usize()]).is_err());
+    let error = writer.write(&[1]).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn writer_panic_disables_further_writes() {
+    struct PanicAfterHeader {
+        header_written: bool,
+    }
+
+    impl Write for PanicAfterHeader {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.header_written {
+                panic!("frame write panicked");
+            }
+
+            self.header_written = true;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let frame_len = FrameLength::Len4KiB;
+    let mut writer = ZymicWriterBuilder::new(&mock_parent_key(), TEST_NONCE)
+        .with_frame_len(frame_len)
+        .build(PanicAfterHeader {
+            header_written: false,
+        })
+        .unwrap();
+
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        writer.write_all(&vec![0; frame_len.as_usize()]).unwrap();
+    }));
+    assert!(result.is_err());
+
+    let error = writer.write(&[1]).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
 }

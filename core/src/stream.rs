@@ -14,4 +14,4 @@ pub use v2::{
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub use v2::ZymicStream;
+pub use v2::{ZymicReader, ZymicReaderBuilder, ZymicWriter, ZymicWriterBuilder};

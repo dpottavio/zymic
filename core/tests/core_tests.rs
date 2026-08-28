@@ -7,10 +7,10 @@ mod core_integ_tests {
     use zymic_core::{
         byte_array,
         key::{ParentKey, ParentKeyId, ParentKeySecret},
-        stream::{FrameLength, HeaderBuilder, HeaderNonce, ZymicStream},
+        stream::{FrameLength, HeaderNonce, ZymicReaderBuilder, ZymicWriterBuilder},
     };
 
-    use std::io::{Cursor, Read, Seek};
+    use std::io::{Cursor, Read};
 
     const FRAME_LENGTHS: [FrameLength; 5] = [
         FrameLength::Len4KiB,
@@ -37,23 +37,27 @@ mod core_integ_tests {
         let mock_key = mock_parent_key();
 
         for frame_len in FRAME_LENGTHS {
-            let header = HeaderBuilder::new(&mock_key, &MOCK_NONCE)
-                .with_frame_len(frame_len)
-                .build();
-
             for size in sizes {
                 let mut plain_txt = Cursor::new(vec![0x0u8; *size]);
                 let cipher_txt = Vec::default();
-                let mut stream = ZymicStream::new(Cursor::new(cipher_txt), &header);
-                std::io::copy(&mut plain_txt, &mut stream).unwrap();
-                stream.eof().unwrap();
-                stream.rewind().unwrap();
+                let mut writer = ZymicWriterBuilder::new(&mock_key, MOCK_NONCE)
+                    .with_frame_len(frame_len)
+                    .build(Cursor::new(cipher_txt))
+                    .unwrap();
+                std::io::copy(&mut plain_txt, &mut writer).unwrap();
+                writer.finish().unwrap();
+
+                let mut cipher_txt = writer.into_inner();
+                cipher_txt.set_position(0);
+                let mut reader = ZymicReaderBuilder::new(&mock_key)
+                    .build(cipher_txt)
+                    .unwrap();
 
                 let plain_txt = plain_txt.into_inner();
                 let mut buf = [0u8; CHUNK_READ_LEN];
                 for chunk in plain_txt.chunks(CHUNK_READ_LEN) {
                     let buf_chunk = &mut buf[..chunk.len()];
-                    stream.read_exact(buf_chunk).unwrap();
+                    reader.read_exact(buf_chunk).unwrap();
                     assert_eq!(buf_chunk, chunk);
                 }
             }
