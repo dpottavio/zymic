@@ -583,6 +583,9 @@ fn derive_data_key(
     let mut data_key = aes_gcm::Key::<Aes256Gcm>::default();
     data_key.copy_from_slice(&hkdf_out[HeaderMac::LEN..]);
 
+    #[cfg(feature = "zeroize")]
+    hkdf_out.zeroize();
+
     (digest, data_key)
 }
 
@@ -885,6 +888,9 @@ impl FrameBuf {
     /// payload length back to `0`. After calling this, the buffer can
     /// be reused for writing a new frame payload.
     pub fn clear(&mut self) {
+        #[cfg(feature = "zeroize")]
+        self.buf.zeroize();
+
         self.buf.clear();
         self.payload_len = 0;
     }
@@ -914,9 +920,10 @@ impl FrameBuf {
     ///
     /// [`decrypt`]: Self::decrypt
     pub fn copy_from_encrypted_bytes(&mut self, src: &[u8]) -> usize {
+        self.clear();
+
         let len = usize::min(src.len(), self.frame_len);
         self.buf.resize(len, 0);
-        self.payload_len = 0;
         self.buf[..len].copy_from_slice(&src[..len]);
         len
     }
@@ -996,9 +1003,15 @@ impl FrameBuf {
     /// This is typically used to prepare the buffer for reading or
     /// decrypting an entire frame from an input source.
     fn clear_resize_to_full(&mut self) {
-        self.buf.clear();
+        self.clear();
         self.buf.resize(self.frame_len, 0);
-        self.payload_len = 0;
+    }
+}
+
+#[cfg(feature = "zeroize")]
+impl Drop for FrameBuf {
+    fn drop(&mut self) {
+        self.buf.zeroize();
     }
 }
 

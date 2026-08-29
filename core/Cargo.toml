@@ -30,7 +30,7 @@ default = ["std", "zeroize"]
 serde = ["dep:serde"]
 std = []
 v1 = []
-zeroize = ["dep:zeroize", "aes-gcm/zeroize"]
+zeroize = ["dep:zeroize", "aes-gcm/zeroize", "sha2/zeroize"]
 
 [dev-dependencies]
 criterion = { version = "0.4"}

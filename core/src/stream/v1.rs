@@ -161,6 +161,9 @@ fn derive_data_key(
     let mut data_key = aes_gcm::Key::<Aes256Gcm>::default();
     data_key.copy_from_slice(&hkdf_out[HeaderMac::LEN..]);
 
+    #[cfg(feature = "zeroize")]
+    hkdf_out.zeroize();
+
     (digest, data_key)
 }
 
@@ -344,9 +347,8 @@ impl FrameBuf {
     /// Call [`commit_chunk_mut`](Self::commit_chunk_mut) with the number of
     /// bytes actually written before decrypting.
     pub fn chunk_mut(&mut self) -> &mut [u8] {
-        self.buf.clear();
+        self.clear();
         self.buf.resize(self.frame_len, 0);
-        self.payload_len = 0;
         &mut self.buf
     }
 
@@ -366,16 +368,32 @@ impl FrameBuf {
     /// At most the configured frame length is copied. The returned value is
     /// the number of bytes consumed from `src`.
     pub fn copy_from_encrypted_bytes(&mut self, src: &[u8]) -> usize {
+        self.clear();
+
         let len = usize::min(src.len(), self.frame_len);
         self.buf.resize(len, 0);
-        self.payload_len = 0;
         self.buf[..len].copy_from_slice(&src[..len]);
         len
+    }
+
+    fn clear(&mut self) {
+        #[cfg(feature = "zeroize")]
+        self.buf.zeroize();
+
+        self.buf.clear();
+        self.payload_len = 0;
     }
 
     #[cfg(feature = "std")]
     fn is_partial(&self) -> bool {
         self.buf.len() < FRAME_HEADER_LEN
+    }
+}
+
+#[cfg(feature = "zeroize")]
+impl Drop for FrameBuf {
+    fn drop(&mut self) {
+        self.buf.zeroize();
     }
 }
 
