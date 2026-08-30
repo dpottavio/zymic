@@ -3,7 +3,7 @@
 
 #[cfg(test)]
 mod cli_integ_tests {
-    use rexpect::{process::wait::WaitStatus, session::spawn_command, spawn};
+    use rexpect::{process::WaitStatus, session::spawn_command, spawn};
 
     use std::{
         env, fs, io,
@@ -72,7 +72,7 @@ mod cli_integ_tests {
         session.exp_string("re-enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
         path
     }
@@ -95,7 +95,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
 
         ciphertxt_path
@@ -117,7 +117,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
         let mut cipher_txt = PathBuf::from(plaintxt_path);
         cipher_txt.set_extension("zym");
@@ -141,7 +141,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
         let mut cipher_txt = PathBuf::from(plaintxt_path);
         cipher_txt.set_extension("zym");
@@ -246,7 +246,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -271,7 +271,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
 
         plaintxt_path
@@ -292,7 +292,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -312,7 +312,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -328,7 +328,7 @@ mod cli_integ_tests {
         session.exp_string("re-enter key password:").unwrap();
         session.send_line(password).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -340,7 +340,7 @@ mod cli_integ_tests {
         session.exp_string("enter key password:").unwrap();
         session.send_line(password).unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -495,7 +495,7 @@ mod cli_integ_tests {
         session.exp_string("frame-length:\t65536").unwrap();
         session.exp_string("parent-key-id:\t").unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -523,7 +523,7 @@ mod cli_integ_tests {
         session.exp_string("frame-length:\t65536").unwrap();
         session.exp_string("parent-key-id:\t").unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
     }
 
@@ -713,7 +713,7 @@ mod cli_integ_tests {
             .unwrap();
         session.exp_string("error: authentication failure").unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -734,7 +734,7 @@ mod cli_integ_tests {
             .exp_string("error: new password is the same as old password")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -755,7 +755,7 @@ mod cli_integ_tests {
             .unwrap();
         session.exp_string("error: passwords do not match").unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -782,7 +782,7 @@ mod cli_integ_tests {
             .exp_string("error: input file extension is not valid, only .zym is supported")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -809,7 +809,7 @@ mod cli_integ_tests {
             .exp_string("error: input file extension is not valid, only .zym is supported")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -829,7 +829,7 @@ mod cli_integ_tests {
             .exp_string("error: key file could not be found")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -849,7 +849,7 @@ mod cli_integ_tests {
             .exp_string("error: key file could not be found")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -862,7 +862,7 @@ mod cli_integ_tests {
             .exp_string("error: key file could not be found")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 
@@ -875,7 +875,7 @@ mod cli_integ_tests {
             .exp_string("error: key file could not be found")
             .unwrap();
         session.exp_eof().unwrap();
-        let status = session.process.exit().unwrap();
+        let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 1)));
     }
 }
