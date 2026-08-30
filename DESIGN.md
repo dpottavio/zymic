@@ -306,9 +306,8 @@ two fields:
 
     * This is 32 bytes of confidential key material.
 
-    * It MUST be generated or derived using cryptographically secure
-    means, such as a CSPRNG or a KDF suitable for deriving cryptographic
-    keys.
+    * It MUST be generated using a CSPRNG or derived using a KDF that
+    produces pseudorandom cryptographic keys.
 
     * It MUST NOT be transmitted or persistently stored in plaintext.
 
@@ -343,14 +342,14 @@ takes as input:
 
 The KDF produces two outputs:
 
-* Data Key -- a symmetric encryption key used to encrypt all Frames
-  in the Stream.
+* Data Key -- a 32-byte symmetric encryption key used to encrypt all
+  Frames in the Stream.
 
-* MAC -- a Message Authentication Code that authenticates the Stream
-  Header.
+* Header MAC -- a 32-byte Message Authentication Code that
+  authenticates the Stream Header.
 
-The resulting MAC is appended to the Stream metadata to form the
-complete, authenticated Stream Header.
+The resulting Header MAC is appended to the Stream metadata to form
+the complete, authenticated Stream Header.
 
 ```
       +-----------------------+           Stream Header
@@ -365,15 +364,12 @@ Parent Key ----->|     |-----> Data Key
 
 ```
 
-### Data Key Derivation Function
+### HKDF Construction
 
 Zymic uses HKDF
 ([RFC-5869](https://www.rfc-editor.org/rfc/rfc5869.html)) with SHA-256
-as the underlying hash algorithm to derive two values:
-
-1. Data Key -- used for AEAD encryption of Frames.
-
-2. MAC -- used to authenticate the Stream Header.
+as the underlying hash algorithm to derive the Data Key and Header
+MAC.
 
 The Header fields are encoded exactly as follows before key
 derivation:
@@ -393,38 +389,39 @@ Header =
     MAC             (32 bytes)
 ```
 
-The MAC field is not included in either HKDF input. Only the 48-byte
-Header Metadata block participates in derivation.
+The MAC field is not included in any HKDF input. Only the 48-byte
+Header Metadata block contributes to the derivation.
+
+The MAC and Data Key are derived using HKDF-Expand with the Parent Key
+Secret as the pseudorandom key (PRK). Each expansion prepends a
+distinct ASCII domain label to the Header Metadata as the Info
+parameter: "mac" for the Header MAC and "key" for the Data Key.
+
+Since the Parent Key Secret is already suitable for direct use as a
+PRK, the HKDF extract step is skipped. Skipping the extract step
+requires the Parent Key Secret to be at least as long as the selected
+hash algorithm's output. The 32-byte Parent Key Secret satisfies this
+requirement for 256-bit hash algorithms.
 
 HKDF is invoked as follows:
-```
-ikm = Parent Key Secret
-salt = Nonce || Parent Key ID
-info = Magic Number || Version || Algorithm || Frame Length || Reserved
-
-# Total length in bytes of the MAC + Data Key
-length = 64
-
-extract_output = hkdf_extract(salt, ikm)
-expand_output = hkdf_expand(extract_output, info, length)
-
-# The MAC is comprised of the first 32 bytes of the HKDF output.
-mac = expand_output[0..32]
-
-# The Data Key is comprised of the second 32 bytes of the HKDF output.
-data_key = expand_output[32..64]
-```
-
-Equivalently, using the serialized Header Metadata defined above:
 
 ```
-salt = Header Metadata[16..48]
-info = Header Metadata[0..16]
+prk = Parent Key Secret
+info = Header Metadata
+expand_length = 32
+
+# Each expand label is encoded as an ASCII string.
+mac_label = "mac"
+key_label = "key"
+
+mac = hkdf_expand(prk, mac_label || info, expand_length)
+
+data_key = hkdf_expand(prk, key_label || info, expand_length)
 ```
 
-All Header fields used in Salt and Info MUST be in their raw
-binary representation exactly as serialized in the Header. Multi-byte
-integer fields MUST use little-endian encoding.
+All Header fields used in the Info field MUST be in their raw binary
+representation exactly as serialized in the Header. Multi-byte integer
+fields MUST use little-endian encoding.
 
 **Validation Requirement**
 
@@ -437,12 +434,11 @@ The derived Data Key MUST NOT be used to decrypt any Frame unless the
 recomputed Header MAC matches the stored Header MAC.
 
 Note: in this construction, "Header MAC" refers specifically to the
-first 32 bytes of HKDF output defined above. It is not a separate
-standalone HMAC invocation over the Header.
+complete 32-byte output of the MAC-specific HKDF expansion.
 
 **Parent Key Binding Enforcement**
 
-The Parent Key ID is included in the HKDF Salt used to derive the
+The Parent Key ID is included in the HKDF info used to derive the
 Stream's Data Key. As a result, the derived Data Key is
 cryptographically bound to the specific Parent Key used.
 

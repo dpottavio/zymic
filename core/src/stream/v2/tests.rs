@@ -3,8 +3,9 @@
 use super::{
     frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameHeader, FrameHeaderBuilder,
     FrameLength, Header, HeaderBuilder, HeaderNonce, ALGO_OFFSET, END_LEN_OFFSET, FRAME_HEADER_LEN,
-    FRAME_LEN_LEN, FRAME_LEN_OFFSET, FRAME_META_LEN, FRAME_TAG_LEN, KEY_ID_OFFSET, MAGIC_NUM,
-    NONCE_OFFSET, PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET, VERSION, VERSION_OFFSET,
+    FRAME_LEN_LEN, FRAME_LEN_OFFSET, FRAME_META_LEN, FRAME_TAG_LEN, HEADER_MAC_OFFSET,
+    KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET, PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET, VERSION,
+    VERSION_OFFSET,
 };
 use crate::{
     byte_array,
@@ -227,6 +228,28 @@ fn header_format() {
         CryptoAlgorithm::Aes256GcmHkdfSha256,
         FrameLength::default(),
     );
+}
+
+/// Test the independently expanded header MAC and data key against a
+/// fixed HKDF-SHA-256 test vector.
+#[test]
+fn header_kdf_outputs() {
+    let parent_key = mock_parent_key();
+    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+
+    let expected_header_mac = [
+        0xcf, 0x20, 0x0a, 0x0f, 0x47, 0x61, 0x6b, 0x9d, 0xec, 0x83, 0x32, 0xf1, 0x92, 0x0e, 0x99,
+        0xef, 0xfe, 0xe5, 0xa9, 0xad, 0x96, 0x72, 0xfb, 0xf4, 0x37, 0x21, 0x17, 0x4d, 0x84, 0xb9,
+        0x0a, 0xf2,
+    ];
+    let expected_data_key = [
+        0x6e, 0x29, 0x8a, 0xd9, 0xc1, 0xc9, 0x28, 0x42, 0x72, 0xd9, 0x98, 0xfe, 0xa2, 0x80, 0x0b,
+        0x2f, 0x50, 0x1e, 0xec, 0x5d, 0x2d, 0x30, 0xd9, 0xab, 0x5c, 0x6a, 0xe2, 0x24, 0x84, 0x6d,
+        0x29, 0xa3,
+    ];
+
+    assert_eq!(&header.bytes()[HEADER_MAC_OFFSET..], &expected_header_mac);
+    assert_eq!(&header.data_key[..], &expected_data_key);
 }
 
 /// Test access to the values encoded by a Header instance.

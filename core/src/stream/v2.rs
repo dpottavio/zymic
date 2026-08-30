@@ -73,9 +73,6 @@ use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
 
-/// Length of 256-bit key in bytes.
-const KEY_LEN_256: usize = 32;
-
 /// Header nonce byte buffer.
 pub type HeaderNonce = ByteArray<16>;
 
@@ -147,13 +144,8 @@ const HEADER_KEY_ID_RANGE: Range<usize> = KEY_ID_OFFSET..KEY_ID_OFFSET + ParentK
 const HEADER_MAC_RANGE: Range<usize> = HEADER_MAC_OFFSET..HEADER_MAC_OFFSET + HeaderMac::LEN;
 
 /// Range over the header used as the `info` parameter into the HKDF
-/// used to derive the data key.
-const HKDF_INFO_RANGE: Range<usize> = 0..NONCE_OFFSET;
-
-/// Range over the header used as the `salt` parameter into the HKDF
-/// used to derive the data key.
-const HKDF_SALT_RANGE: Range<usize> =
-    NONCE_OFFSET..NONCE_OFFSET + HeaderNonce::LEN + ParentKeyId::LEN;
+/// expansions used to derive the header MAC and data key.
+const HKDF_INFO_RANGE: Range<usize> = 0..HEADER_MAC_OFFSET;
 
 // Frame field lengths.
 
@@ -191,8 +183,11 @@ const END_LEN_OFFSET: usize = SEQ_NUM_OFFSET + SEQ_NUM_LEN;
 /// frame payload field offset
 const PAYLOAD_OFFSET: usize = END_LEN_OFFSET + END_LEN;
 
-/// data key length in bytes
-const DATA_KEY_LEN: usize = KEY_LEN_256;
+/// HKDF expand label for the header MAC.
+const HEADER_MAC_KDF_LABEL: &[u8] = b"mac";
+
+/// HKDF expand label for the data key.
+const DATA_KEY_KDF_LABEL: &[u8] = b"key";
 
 /// header magic number value
 const MAGIC_NUM: u32 = 0x6d797a2e;
@@ -569,24 +564,18 @@ struct StreamCore<T> {
 }
 
 /// Derive and return a stream header message digest and data key.
-fn derive_data_key(
-    parent_key: &ParentKey,
-    salt: &[u8],
-    info: &[u8],
-) -> (HeaderMac, aes_gcm::Key<Aes256>) {
-    let mut hkdf_out = [0u8; HeaderMac::LEN + DATA_KEY_LEN];
-    let hkdf = Hkdf::<Sha256>::new(Some(salt), parent_key.secret());
-    hkdf.expand(info, &mut hkdf_out).expect("hdkf expansion");
+fn derive_data_key(parent_key: &ParentKey, info: &[u8]) -> (HeaderMac, aes_gcm::Key<Aes256>) {
+    let hkdf = Hkdf::<Sha256>::from_prk(parent_key.secret()).expect("valid HKDF PRK length");
 
-    let digest = HeaderMac::from(&hkdf_out[..HeaderMac::LEN]);
+    let mut header_mac = HeaderMac::default();
+    hkdf.expand_multi_info(&[HEADER_MAC_KDF_LABEL, info], header_mac.as_mut())
+        .expect("HKDF header MAC expansion");
 
     let mut data_key = aes_gcm::Key::<Aes256Gcm>::default();
-    data_key.copy_from_slice(&hkdf_out[HeaderMac::LEN..]);
+    hkdf.expand_multi_info(&[DATA_KEY_KDF_LABEL, info], &mut data_key)
+        .expect("HKDF data key expansion");
 
-    #[cfg(feature = "zeroize")]
-    hkdf_out.zeroize();
-
-    (digest, data_key)
+    (header_mac, data_key)
 }
 
 /// Construct an algorithm-sized AEAD nonce from a Frame Sequence
@@ -1083,10 +1072,9 @@ impl Header {
         let frame_len = FrameLength::try_from(byte_buf.get_u8())?;
 
         let info = &bytes.as_slice()[HKDF_INFO_RANGE];
-        let salt = &bytes.as_slice()[HKDF_SALT_RANGE];
         let expected_mac = &bytes.as_slice()[HEADER_MAC_RANGE];
 
-        let (header_mac, data_key) = derive_data_key(parent_key, salt, info);
+        let (header_mac, data_key) = derive_data_key(parent_key, info);
 
         if header_mac.as_ref().ct_eq(expected_mac).unwrap_u8() != 1 {
             return Err(Error::new(ErrorKind::Authentication));
@@ -1175,9 +1163,8 @@ impl<'a> HeaderBuilder<'a> {
         let mut bytes = cur.into_inner();
 
         let info = &bytes[HKDF_INFO_RANGE];
-        let salt = &bytes[HKDF_SALT_RANGE];
 
-        let (header_mac, data_key) = derive_data_key(self.parent_key, salt, info);
+        let (header_mac, data_key) = derive_data_key(self.parent_key, info);
         bytes.as_mut()[HEADER_MAC_OFFSET..].copy_from_slice(&header_mac);
 
         Header {
