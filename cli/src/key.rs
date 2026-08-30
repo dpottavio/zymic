@@ -5,7 +5,7 @@
 //! This module provides tools for creating and storing cryptographic
 //! keys to disk.
 use crate::error::Error;
-use aes_kw::KekAes256;
+use aes_kw::{KeyInit, KwAes256};
 use argon2::Argon2;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -205,10 +205,10 @@ impl KeyFile {
     /// 'password' to unwrap the key.
     pub fn unwrap(&self, password: &str) -> Result<ParentKey, Error> {
         let mut hash = argon_hash(self.argon, &self.id, self.date, password)?;
-        let kek = KekAes256::try_from(hash.as_slice())?;
+        let kek = KwAes256::new(hash.as_array().into());
         hash.zeroize();
         let mut secret = ParentKeySecret::default();
-        kek.unwrap(&self.wrapped_secret, &mut secret)?;
+        kek.unwrap_key(&self.wrapped_secret, &mut secret)?;
 
         Ok(ParentKey::new(self.id.clone(), secret))
     }
@@ -230,10 +230,10 @@ impl KeyFile {
         secret: &ParentKeySecret,
     ) -> Result<WrappedSecret, Error> {
         let mut hash = argon_hash(argon, id, date, password)?;
-        let kek = KekAes256::try_from(hash.as_slice())?;
+        let kek = KwAes256::new(hash.as_array().into());
         hash.zeroize();
         let mut wrapped_secret = WrappedSecret::default();
-        kek.wrap(secret, &mut wrapped_secret)?;
+        kek.wrap_key(secret, &mut wrapped_secret)?;
 
         Ok(wrapped_secret)
     }
