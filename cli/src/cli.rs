@@ -6,7 +6,7 @@ use crate::{
 use clap::{Args, Parser, Subcommand, ValueEnum};
 use indoc::indoc;
 #[cfg(unix)]
-use std::os::unix::fs::OpenOptionsExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
     env,
     ffi::OsStr,
@@ -285,7 +285,6 @@ fn resolve_key_path(path: Option<PathBuf>) -> Result<PathBuf, Error> {
 fn set_key_permission(path: &PathBuf) -> Result<(), Error> {
     #[cfg(unix)]
     {
-        use std::os::unix::fs::PermissionsExt;
         let perms = fs::Permissions::from_mode(0o600);
         fs::set_permissions(path, perms)?;
     }
@@ -303,6 +302,42 @@ fn create_file(out_path: &Path, force: bool) -> Result<fs::File, Error> {
     open_opts.mode(0o600);
     let file = open_opts.open(out_path)?;
     Ok(file)
+}
+
+/// Write a replacement file next to `path` and atomically move it into place.
+///
+/// The original file remains untouched until `write` succeeds and the
+/// replacement has been synchronized. If an error occurs before `persist`, the
+/// temporary file is removed when it is dropped.
+fn atomic_replace(
+    path: &Path,
+    write: impl FnOnce(&mut fs::File) -> Result<(), Error>,
+) -> Result<(), Error> {
+    let parent = path
+        .parent()
+        .ok_or_else(|| io::Error::other("replacement path has no parent directory"))?;
+
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".zymic-key-");
+    #[cfg(unix)]
+    builder.permissions(fs::Permissions::from_mode(0o600));
+
+    // Creating the temporary file in the target directory keeps the final
+    // rename on the same filesystem.
+    let mut temp = builder.tempfile_in(parent)?;
+    write(temp.as_file_mut())?;
+    temp.as_file_mut().flush()?;
+    temp.as_file().sync_all()?;
+
+    // persist atomically replaces an existing destination. PersistError owns
+    // the temporary file, so it is still cleaned up if the rename fails.
+    let _file = temp.persist(path).map_err(|error| error.error)?;
+
+    // Synchronize the directory entry so the rename survives a power loss.
+    #[cfg(unix)]
+    fs::File::open(parent)?.sync_all()?;
+
+    Ok(())
 }
 
 /// Return an io::Write instance from an output path argument.
@@ -549,12 +584,10 @@ pub fn handle_input() -> Result<(), Error> {
                 }
 
                 key.rewrap(&old_password, &new_password)?;
-                let file = fs::OpenOptions::new()
-                    .write(true)
-                    .truncate(true)
-                    .open(&key_path)?;
-                serde_json::to_writer(file, &key)?;
-                set_key_permission(&key_path)?;
+                atomic_replace(&key_path, |file| {
+                    serde_json::to_writer(file, &key)?;
+                    Ok(())
+                })?;
             }
         },
         Command::Enc(args) => {
@@ -608,9 +641,13 @@ pub fn handle_input() -> Result<(), Error> {
 
 #[cfg(test)]
 mod tests {
-    use super::{decrypt_v1, Cli, Command};
+    use super::{atomic_replace, decrypt_v1, Cli, Command};
     use clap::Parser;
-    use std::{io::Cursor, path::PathBuf};
+    use std::{
+        fs,
+        io::{self, Cursor, Write},
+        path::PathBuf,
+    };
     use zymic_core::{
         byte_array,
         key::{ParentKey, ParentKeyId, ParentKeySecret},
@@ -683,5 +720,46 @@ mod tests {
         decrypt_v1(&mut input, &mut output, &v1_parent_key()).unwrap();
 
         assert_eq!(output, b"v1 invocation compatibility");
+    }
+
+    #[test]
+    fn atomic_replace_commits_complete_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        fs::write(&path, b"old key").unwrap();
+
+        atomic_replace(&path, |file| {
+            file.write_all(b"new key")?;
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(fs::read(&path).unwrap(), b"new key");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+    }
+
+    #[test]
+    fn atomic_replace_error_preserves_original() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("key");
+        fs::write(&path, b"old key").unwrap();
+
+        let result = atomic_replace(&path, |file| {
+            file.write_all(b"partial new key")?;
+            Err(io::Error::other("injected write failure").into())
+        });
+
+        assert!(result.is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"old key");
+        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 }
