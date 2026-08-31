@@ -23,6 +23,29 @@ This repro contains the following Rust crates:
 [core-docs-badge]: https://docs.rs/zymic_core/badge.svg
 [core-docs-url]: https://docs.rs/zymic_core
 
+## Version 2
+
+Version 2 of the format is on `main` and is currently a
+work-in-progress. The new format contains the following improvements:
+
+* Streams are now immutable. In v1, an attacker could replay an older
+  frame or stream, rolling back its invocation counter. If the
+  application subsequently modified and re-encrypted that data, it
+  could reuse a previously used AEAD nonce. In v2, modifications must
+  be encoded as a new stream with a fresh Data Key, preventing this
+  rollback-induced nonce reuse.
+
+* Frame headers have been reduced from 16 bytes to 8 bytes. Now that
+  streams are immutable, the 8 byte invocation count is no longer
+  needed.
+
+* The HKDF routine for generating data keys and header MAC has been
+  simplified to two expand functions.
+
+⚠️ The new format is not backward compatible with v1. Read-only
+support of v1 data is supported going forward via the `v1` feature
+flag.
+
 ## License
 
 All code and documentation in this repository is licensed under the
