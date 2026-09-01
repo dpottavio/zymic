@@ -436,15 +436,16 @@ recomputed Header MAC matches the stored Header MAC.
 Note: in this construction, "Header MAC" refers specifically to the
 complete 32-byte output of the MAC-specific HKDF expansion.
 
-**Parent Key Binding Enforcement**
+**Parent Key Binding and Commitment**
 
-The Parent Key ID is included in the HKDF info used to derive the
-Stream's Data Key. As a result, the derived Data Key is
-cryptographically bound to the specific Parent Key used.
+The MAC construction is intended to provide key commitment at the
+Parent Key level: it should be computationally infeasible to find two
+distinct Parent Key Secrets that both successfully pass MAC validation
+and decrypt the same encoded Stream.
 
-Any attempt to substitute the Parent Key or its ID will result in a
-different derived Data Key, causing subsequent Frame decryption or MAC
-verification to fail.
+This specification does not claim a formally proven key-commitment
+security bound or conformance to a particular formal key-commitment
+notion.
 
 ## Replay Attacks
 
