@@ -407,16 +407,13 @@ HKDF is invoked as follows:
 
 ```
 prk = Parent Key Secret
-info = Header Metadata
 expand_length = 32
 
-# Each expand label is encoded as an ASCII string.
-mac_label = "mac"
-key_label = "key"
+mac_info = "mac" || Header Metadata
+key_info = "key" || Header Metadata
 
-mac = hkdf_expand(prk, mac_label || info, expand_length)
-
-data_key = hkdf_expand(prk, key_label || info, expand_length)
+mac = hkdf_expand(prk, mac_info, expand_length)
+data_key = hkdf_expand(prk, key_info, expand_length)
 ```
 
 All Header fields used in the Info field MUST be in their raw binary
