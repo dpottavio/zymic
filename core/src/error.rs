@@ -18,6 +18,7 @@ pub(crate) enum ErrorKind {
     InvalidArgument,
     InvalidArrayLength(usize, usize),
     InvalidBufLength,
+    #[cfg(feature = "v1")]
     InvalidEndLength(u32),
     InvalidFrameLength(u8),
     InvalidMagicNumber(u32),
@@ -31,7 +32,7 @@ pub(crate) enum ErrorKind {
     TryFromInt(core::num::TryFromIntError),
     #[cfg(feature = "std")]
     UnexpectedEof,
-    UnexpectedSeqNum(u32, u32),
+    UnexpectedSeqNum(u64, u64),
     UnsupportedCrypto(u16),
     UnsupportedVersion(u8),
 }
@@ -49,6 +50,7 @@ impl fmt::Display for Error {
                 write!(f, "invalid array length: expected {e}, received {r}")
             }
             ErrorKind::InvalidBufLength => write!(f, "invalid buffer length"),
+            #[cfg(feature = "v1")]
             ErrorKind::InvalidEndLength(n) => {
                 write!(f, "invalid end length of {n} bytes")
             }

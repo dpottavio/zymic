@@ -150,10 +150,13 @@ const HKDF_INFO_RANGE: Range<usize> = 0..HEADER_MAC_OFFSET;
 // Frame field lengths.
 
 /// frame sequence number field length in bytes
-const SEQ_NUM_LEN: usize = 4;
+const SEQ_NUM_LEN: usize = 8;
 
-/// frame End Length field length in bytes
-const END_LEN: usize = 4;
+/// Mask for the End Frame flag in the serialized sequence number.
+const END_FRAME_MASK: u64 = 1 << 63;
+
+/// Largest counter value representable by a frame sequence number.
+const MAX_FRAME_COUNTER: u64 = END_FRAME_MASK - 1;
 
 /// frame TAG field length in bytes
 ///
@@ -165,9 +168,9 @@ const END_LEN: usize = 4;
 const FRAME_TAG_LEN: usize = 16;
 
 /// Total length in bytes of all non-payload frame fields.
-const FRAME_META_LEN: usize = FRAME_TAG_LEN + SEQ_NUM_LEN + END_LEN;
+const FRAME_META_LEN: usize = FRAME_TAG_LEN + SEQ_NUM_LEN;
 
-const FRAME_HEADER_LEN: usize = SEQ_NUM_LEN + END_LEN;
+const FRAME_HEADER_LEN: usize = SEQ_NUM_LEN;
 
 /// AES-256-GCM nonce length.
 type FrameNonceLen = U12;
@@ -177,11 +180,8 @@ type FrameNonceLen = U12;
 /// frame sequence number field offset
 const SEQ_NUM_OFFSET: usize = 0;
 
-/// frame End Len field offset
-const END_LEN_OFFSET: usize = SEQ_NUM_OFFSET + SEQ_NUM_LEN;
-
 /// frame payload field offset
-const PAYLOAD_OFFSET: usize = END_LEN_OFFSET + END_LEN;
+const PAYLOAD_OFFSET: usize = SEQ_NUM_OFFSET + SEQ_NUM_LEN;
 
 /// HKDF expand label for the header MAC.
 const HEADER_MAC_KDF_LABEL: &[u8] = b"mac";
@@ -254,11 +254,12 @@ pub struct HeaderBuilder<'a> {
     frame_len: FrameLength,
 }
 
-/// A Frame header type that contains the sequence number and frame
-/// type for a given frame encoding.
+/// A Frame header type that contains the 63-bit Frame Counter and frame
+/// type for a given frame encoding. On serialization, the frame type is
+/// stored in the most significant bit of the 64-bit Sequence Number.
 #[derive(Default)]
 pub struct FrameHeader {
-    seq_num: u32,
+    seq_num: u64,
     is_end: bool,
 }
 
@@ -275,7 +276,7 @@ pub struct FrameHeader {
 /// assert!(header.is_end());
 ///```
 pub struct FrameHeaderBuilder {
-    seq_num: u32,
+    seq_num: u64,
     is_end: bool,
 }
 
@@ -290,7 +291,7 @@ pub struct FrameHeaderBuilder {
 ///
 /// The buffer stores three contiguous sections:
 ///
-/// 1. Frame header — frame metadata (sequence number and end length).
+/// 1. Frame header — the sequence number and End Frame flag.
 ///
 /// 2. Payload — plaintext before [`encrypt`] / after
 ///    [`decrypt`]; ciphertext after [`encrypt`].
@@ -452,7 +453,7 @@ pub struct ZymicReader<T> {
 pub struct ZymicReaderBuilder<'a> {
     parent_key: &'a ParentKey,
     header: Option<HeaderBytes>,
-    seq_num: u32,
+    seq_num: u64,
 }
 
 /// Configures and constructs a [`ZymicWriter`].
@@ -531,12 +532,12 @@ struct StreamCore<T> {
     ///
     /// When a seek is performed, it instead reflects the sequence
     /// number of the frame that the seek landed on.
-    seq_num: u32,
+    seq_num: u64,
     /// Sequence number at which the stream was initialized.
     ///
     /// May be greater than zero if the stream starts reading from
     /// beyond the first frame.
-    start_seq_num: u32,
+    start_seq_num: u64,
     /// Absolute byte offset of the first encrypted frame in `inner`.
     ///
     /// This is the serialized header length for an inline-header stream and
@@ -549,8 +550,9 @@ struct StreamCore<T> {
     /// End-of-stream marker.
     ///
     /// `Some(len)` once the End Frame is reached, where `len` is the
-    /// End Length specified in the frame header. `None` otherwise.
-    end_len: Option<usize>,
+    /// payload length derived from the End Frame's serialized length.
+    /// `None` otherwise.
+    end_payload_len: Option<usize>,
     /// Buffer for the currently active frame.
     frame_buf: FrameBuf,
     /// Contains the encoded Zymic stream.
@@ -578,10 +580,11 @@ fn derive_data_key(parent_key: &ParentKey, info: &[u8]) -> (HeaderMac, aes_gcm::
     (header_mac, data_key)
 }
 
-/// Construct an algorithm-sized AEAD nonce from a Frame Sequence
-/// Number. The Sequence Number is encoded as an unsigned
-/// little-endian integer and zero-extended to the nonce width.
-fn frame_nonce(seq_num: u32) -> AesNonce<FrameNonceLen> {
+/// Construct an algorithm-sized AEAD nonce from a complete serialized Frame
+/// Sequence Number, including the End Frame flag. The Sequence Number is
+/// encoded as an unsigned little-endian integer and zero-extended to the nonce
+/// width.
+fn frame_nonce(seq_num: u64) -> AesNonce<FrameNonceLen> {
     let mut nonce = AesNonce::<FrameNonceLen>::default();
     nonce[..SEQ_NUM_LEN].copy_from_slice(&seq_num.to_le_bytes());
     nonce
@@ -677,9 +680,9 @@ impl FrameBuf {
     ///      Frame Header         Length       Capacity
     /// <-------------------> <-------------> <-------->
     ///
-    /// +----------+---------+---------------+----------+
-    /// | Seq. Num | End Len |    Payload    |  (free)  |
-    /// +----------+---------+---------------+----------+
+    /// +----------+---------------+----------+
+    /// | Seq. Num |    Payload    |  (free)  |
+    /// +----------+---------------+----------+
     ///                      ^
     ///                      |
     /// payload_off: 0 ------+
@@ -753,6 +756,11 @@ impl FrameBuf {
     /// given Header's Data Key. Changing an encrypted Frame requires a
     /// new Stream Header and Data Key.
     ///
+    /// # Panics
+    ///
+    /// Panics if a Body Frame's payload does not fill the configured Frame
+    /// Length.
+    ///
     /// The diagram below illustrates the binary layout of the buffer
     /// after [`encrypt`] is called.
     ///
@@ -763,37 +771,32 @@ impl FrameBuf {
     ///            Frame Header                Length
     ///  <-------------------------------> <------------->
     ///
-    /// +----------+---------+---------------+-----------+
-    /// | Seq. Num | End Len |    Payload    |  Auth Tag |
-    /// +----------+---------+---------------+-----------+
+    /// +----------+---------------+-----------+
+    /// | Seq. Num |    Payload    |  Auth Tag |
+    /// +----------+---------------+-----------+
     ///```
     /// [`encrypt`]: Self::encrypt
     /// [`FrameHeader`]: crate::stream::FrameHeader
     pub fn encrypt(&mut self, frame_header: &FrameHeader) {
+        assert!(
+            frame_header.is_end() || self.payload_len == self.max_payload_len,
+            "Body Frame payload must fill the configured Frame Length"
+        );
         if self.buf.len() < FRAME_HEADER_LEN {
             self.buf.resize(FRAME_HEADER_LEN, 0);
         }
         debug_assert!(self.payload_len <= self.buf.len() - FRAME_HEADER_LEN);
 
-        let seq_num_bytes = frame_header.seq_num().to_le_bytes();
+        let encoded_seq_num = frame_header.encoded_seq_num();
+        let seq_num_bytes = encoded_seq_num.to_le_bytes();
         self.set_bytes(seq_num_bytes.as_slice(), SEQ_NUM_OFFSET);
 
-        let eof_len_bytes = if frame_header.is_end() {
-            u32::try_from(self.payload_len)
-                .expect("payload len should be 4 bytes")
-                .to_le_bytes()
-        } else {
-            u32::MAX.to_le_bytes()
-        };
-        self.set_bytes(eof_len_bytes.as_slice(), END_LEN_OFFSET);
-
-        let nonce = frame_nonce(frame_header.seq_num());
-        let (frame_header, payload) = self.buf.split_at_mut(FRAME_HEADER_LEN);
-        let eof_len = &frame_header[END_LEN_OFFSET..PAYLOAD_OFFSET];
+        let nonce = frame_nonce(encoded_seq_num);
+        let (_, payload) = self.buf.split_at_mut(FRAME_HEADER_LEN);
 
         let tag = self
             .cipher
-            .encrypt_inout_detached(&nonce, eof_len, (&mut payload[..self.payload_len]).into())
+            .encrypt_inout_detached(&nonce, &[], (&mut payload[..self.payload_len]).into())
             .expect("buffer of sufficient size");
 
         // Ensure that we can append the authentication tag after the
@@ -810,55 +813,44 @@ impl FrameBuf {
     /// This method returns an [`Error`] if:
     ///
     /// * The buffer is too short to contain the required frame
-    ///   fields. At minimum, the sequence number, end length, and tag
-    ///   must be present.
+    ///   fields. At minimum, the sequence number and tag must be present.
     ///
     /// * The supplied `seq_num` does not match the sequence number
     ///   recovered and authenticated from the frame. This indicates
     ///   a missing or reordered frame.
     ///
-    /// * For an End Frame, the end length does not match the actual
-    ///   payload length.
+    /// * A Body Frame is shorter than the configured Frame Length.
     ///
     /// * Authentication fails: the computed AEAD tag does not match the
     ///   tag stored in the frame.
     ///
     /// [`Error`]: crate::error::Error
-    pub fn decrypt(&mut self, seq_num: u32) -> Result<FrameHeader, Error> {
+    pub fn decrypt(&mut self, seq_num: u64) -> Result<FrameHeader, Error> {
         if self.buf.len() < FRAME_META_LEN {
             return Err(Error::new(ErrorKind::InvalidBufLength));
         }
+        let frame_len = self.buf.len();
         let (frame_header, frame) = self.buf.split_at_mut(FRAME_HEADER_LEN);
-        let (seq_num_bytes, eof_len_bytes) = frame_header.split_at_mut(END_LEN_OFFSET);
+        let encoded_seq_num = u64::from_le_bytes(
+            frame_header
+                .try_into()
+                .expect("sequence number should be 8 bytes"),
+        );
+        let is_end = encoded_seq_num & END_FRAME_MASK != 0;
+        let seq_num_decoded = encoded_seq_num & MAX_FRAME_COUNTER;
 
-        let seq_num_decoded =
-            u32::from_le_bytes(seq_num_bytes.try_into().expect("seq num should be 4 bytes"));
-
-        let eof_len =
-            u32::from_le_bytes(eof_len_bytes.try_into().expect("eof len should be 4 bytes"));
-
-        let (payload_len, is_end) = if eof_len != u32::MAX {
-            if eof_len as usize > self.max_payload_len {
-                return Err(Error::new(ErrorKind::InvalidEndLength(eof_len)));
-            }
-            (eof_len as usize, true)
-        } else {
-            (self.frame_len - FRAME_META_LEN, false)
-        };
-
-        // Confirm that the computed payload len is valid
-        let body_len = payload_len + FRAME_TAG_LEN;
-        if frame.len() < body_len {
-            return Err(Error::new(ErrorKind::InvalidEndLength(eof_len)));
+        if !is_end && frame_len != self.frame_len {
+            return Err(Error::new(ErrorKind::InvalidBufLength));
         }
+        let payload_len = frame.len() - FRAME_TAG_LEN;
 
         let (payload, mac) = frame.split_at_mut(payload_len);
 
         let tag = Tag::try_from(&mac[..FRAME_TAG_LEN]).expect("tag should be 16 bytes");
-        let nonce = frame_nonce(seq_num_decoded);
+        let nonce = frame_nonce(encoded_seq_num);
 
         self.cipher
-            .decrypt_inout_detached(&nonce, eof_len_bytes, payload.into(), &tag)?;
+            .decrypt_inout_detached(&nonce, &[], payload.into(), &tag)?;
 
         if seq_num != seq_num_decoded {
             return Err(Error::new(ErrorKind::UnexpectedSeqNum(
@@ -965,8 +957,8 @@ impl FrameBuf {
     /// This indicates that the buffer does not yet contain enough
     /// bytes to parse a complete frame header.
     ///
-    /// Currently this is only used by the std stream reader and writer.
-    #[cfg(any(feature = "std", test))]
+    /// Used by unit tests to inspect buffer state.
+    #[cfg(test)]
     fn is_partial(&self) -> bool {
         self.buf.len() < FRAME_HEADER_LEN
     }
@@ -1180,12 +1172,19 @@ impl FrameHeader {
     ///
     /// If `is_end` is `true`, this header describes an **End Frame**.
     /// Otherwise it describes a **Body Frame**.
-    fn new(seq_num: u32, is_end: bool) -> Self {
+    fn new(seq_num: u64, is_end: bool) -> Self {
+        debug_assert!(seq_num <= MAX_FRAME_COUNTER);
         Self { seq_num, is_end }
     }
 
-    /// Return the sequence number for this header.
-    pub fn seq_num(&self) -> u32 {
+    /// Return the complete serialized sequence number, including the End
+    /// Frame flag in its most significant bit.
+    fn encoded_seq_num(&self) -> u64 {
+        self.seq_num | if self.is_end { END_FRAME_MASK } else { 0 }
+    }
+
+    /// Return the 63-bit Frame Counter for this header.
+    pub fn seq_num(&self) -> u64 {
         self.seq_num
     }
 
@@ -1199,8 +1198,17 @@ impl FrameHeader {
 
 impl FrameHeaderBuilder {
     /// Create a new instance specifying the sequence number. The
-    /// sequence number must be incremented for each frame.
-    pub fn new(seq_num: u32) -> Self {
+    /// sequence number must be incremented for each frame and must fit in
+    /// the 63-bit Frame Counter field.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `seq_num` does not fit in 63 bits.
+    pub fn new(seq_num: u64) -> Self {
+        assert!(
+            seq_num <= MAX_FRAME_COUNTER,
+            "frame counter must fit in 63 bits"
+        );
         Self {
             seq_num,
             is_end: false,
@@ -1242,7 +1250,7 @@ impl<T> StreamCore<T> {
     /// example, when continuing decryption at a checkpoint or
     /// appending frames when you already know the next sequence
     /// number.
-    fn new_with_seq_num(inner: T, header: &Header, seq_num: u32) -> Self {
+    fn new_with_seq_num(inner: T, header: &Header, seq_num: u64) -> Self {
         Self::new_with_seq_num_and_frame_start(inner, header, seq_num, 0)
     }
 
@@ -1250,7 +1258,7 @@ impl<T> StreamCore<T> {
     fn new_with_seq_num_and_frame_start(
         inner: T,
         header: &Header,
-        seq_num: u32,
+        seq_num: u64,
         frame_start: u64,
     ) -> Self {
         let frame_buf = FrameBuf::new(header);
@@ -1260,7 +1268,7 @@ impl<T> StreamCore<T> {
             start_seq_num: seq_num,
             frame_start,
             payload_pos: 0,
-            end_len: None,
+            end_payload_len: None,
             frame_buf,
             inner,
         }
@@ -1276,8 +1284,10 @@ impl<T> StreamCore<T> {
 
     /// Return true if the stream has reached its End Frame.
     fn is_eof(&self) -> bool {
-        self.end_len
-            .map_or_else(|| false, |end_len| self.payload_pos == end_len)
+        self.end_payload_len.map_or_else(
+            || false,
+            |end_payload_len| self.payload_pos == end_payload_len,
+        )
     }
 
     /// Confirm that the stream has ended cleanly.
@@ -1300,8 +1310,8 @@ impl<T> StreamCore<T> {
     /// A frame offset is the byte offset position at the start of a
     /// frame.
     #[inline]
-    fn frame_idx_to_frame_off(&self, frame_idx: u32) -> Result<u64, Error> {
-        let frame_off = (frame_idx as u64)
+    fn frame_idx_to_frame_off(&self, frame_idx: u64) -> Result<u64, Error> {
+        let frame_off = frame_idx
             .checked_mul(self.frame_buf.frame_len as u64)
             .and_then(|offset| offset.checked_add(self.frame_start))
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
@@ -1314,13 +1324,13 @@ impl<T> StreamCore<T> {
     /// A frame offset is the byte offset position at the start of a
     /// frame.
     #[inline]
-    fn byte_off_to_frame_idx(&self, abs_off: u64) -> Result<u32, Error> {
+    fn byte_off_to_frame_idx(&self, abs_off: u64) -> Result<u64, Error> {
         let frame_off = abs_off
             .checked_sub(self.frame_start)
             .ok_or(Error::new(ErrorKind::UnexpectedEof))?;
         let frame_idx = frame_off / self.frame_buf.frame_len as u64;
 
-        Ok(u32::try_from(frame_idx)?)
+        Ok(frame_idx)
     }
 
     /// Convert a payload offset into a frame index.
@@ -1328,10 +1338,10 @@ impl<T> StreamCore<T> {
     /// Payload offset is a position within the logical payload data
     /// of the stream (excluding header metadata).
     #[inline]
-    fn payload_off_to_frame_idx(&self, payload_offset: u64) -> Result<u32, Error> {
+    fn payload_off_to_frame_idx(&self, payload_offset: u64) -> Result<u64, Error> {
         let frame_idx = payload_offset / self.frame_buf.max_payload_len as u64;
 
-        Ok(u32::try_from(frame_idx)?)
+        Ok(frame_idx)
     }
 
     /// Convert a payload offset into its position within a frame payload.
@@ -1346,7 +1356,7 @@ impl<T> StreamCore<T> {
     #[inline]
     fn current_payload_off(&self) -> Result<u64, Error> {
         let frame_idx = self.current_frame_idx();
-        let abs_payload_off = (frame_idx as u64)
+        let abs_payload_off = frame_idx
             .checked_mul(self.frame_buf.max_payload_len as u64)
             .and_then(|v| v.checked_add(self.payload_pos as u64))
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
@@ -1358,7 +1368,7 @@ impl<T> StreamCore<T> {
     #[inline]
     fn total_payload_len(&self) -> Result<u64, Error> {
         let frame_idx = self.current_frame_idx();
-        let abs_payload_len = (frame_idx as u64)
+        let abs_payload_len = frame_idx
             .checked_mul(self.frame_buf.max_payload_len as u64)
             .and_then(|v| v.checked_add(self.frame_buf.payload_len as u64))
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
@@ -1368,14 +1378,14 @@ impl<T> StreamCore<T> {
 
     /// Return the current frame index.
     #[inline]
-    fn current_frame_idx(&self) -> u32 {
+    fn current_frame_idx(&self) -> u64 {
         let frame_idx = self.seq_num - self.start_seq_num;
 
         // On the read path, `seq_num` advances immediately after a Body
         // Frame is loaded, while `frame_buf` continues to expose that
         // Frame's payload. Account for that difference when computing the
         // logical position.
-        if self.end_len.is_none() && self.frame_buf.payload_len > 0 {
+        if self.end_payload_len.is_none() && self.frame_buf.payload_len > 0 {
             frame_idx.saturating_sub(1)
         } else {
             frame_idx
@@ -1435,7 +1445,15 @@ impl<'a> ZymicReaderBuilder<'a> {
     }
 
     /// Set the expected sequence number of the first frame in `inner`.
-    pub fn with_seq_num(mut self, seq_num: u32) -> Self {
+    ///
+    /// # Panics
+    ///
+    /// Panics if `seq_num` does not fit in the 63-bit Frame Counter field.
+    pub fn with_seq_num(mut self, seq_num: u64) -> Self {
+        assert!(
+            seq_num <= MAX_FRAME_COUNTER,
+            "frame counter must fit in 63 bits"
+        );
         self.seq_num = seq_num;
         self
     }
@@ -1559,7 +1577,7 @@ impl<T: Write> StreamCore<T> {
         self.inner.flush()?;
 
         let len = self.frame_buf.payload_len;
-        self.end_len = Some(len);
+        self.end_payload_len = Some(len);
         self.payload_pos = len;
 
         Ok(())
@@ -1595,12 +1613,16 @@ impl<T: Read> StreamCore<T> {
     /// frame read from the underlying `inner` type. The payload
     /// section is decrypted in-place.
     ///
-    /// Returns `false` the end-of-file was reached on the underlying
+    /// Returns `false` if the end-of-file was reached on the underlying
     /// `inner` type and no data was copied into the frame buffer.
     ///
     /// # Errors
     ///
     /// * If the stream reaches an unexpected end of file.
+    ///
+    /// * If an End Frame exceeds the configured Frame Length
+    ///   ([`ErrorKind::InvalidBufLength`]). This includes trailing data after
+    ///   an End Frame that exactly fills the frame buffer.
     ///
     /// * For any failure reading the underlying inner type.
     ///
@@ -1623,12 +1645,28 @@ impl<T: Read> StreamCore<T> {
         if total_len == 0 {
             return Ok(false);
         }
-        if self.frame_buf.is_partial() {
+        if total_len < FRAME_META_LEN {
             return Err(Error::new(ErrorKind::UnexpectedEof));
+        }
+        if total_len < self.frame_buf.frame_len {
+            let encoded_seq_num = u64::from_le_bytes(
+                self.frame_buf.as_ref()[..SEQ_NUM_LEN]
+                    .try_into()
+                    .expect("sequence number should be 8 bytes"),
+            );
+            if encoded_seq_num & END_FRAME_MASK == 0 {
+                return Err(Error::new(ErrorKind::UnexpectedEof));
+            }
         }
 
         let frame_header = self.frame_buf.decrypt(self.seq_num)?;
-        self.end_len = frame_header.is_end().then_some(self.frame_buf.payload_len);
+        if frame_header.is_end() && total_len == self.frame_buf.frame_len {
+            let mut trailing = [0u8; 1];
+            if self.inner.read(&mut trailing)? != 0 {
+                return Err(Error::new(ErrorKind::InvalidBufLength));
+            }
+        }
+        self.end_payload_len = frame_header.is_end().then_some(self.frame_buf.payload_len);
         self.payload_pos = 0;
 
         Ok(true)
@@ -1668,8 +1706,12 @@ impl<T: Read> Read for StreamCore<T> {
             if self.frame_payload_remaining() == 0 && self.read_next_frame()? {
                 // The End Frame consumes the current sequence number but
                 // does not require a subsequent one. This allows
-                // `u32::MAX` to be used by a valid terminal Frame.
-                if self.end_len.is_none() {
+                // the maximum 63-bit counter to be used by a valid terminal
+                // Frame.
+                if self.end_payload_len.is_none() {
+                    if self.seq_num == MAX_FRAME_COUNTER {
+                        return Err(Error::new(ErrorKind::IntegerOverflow).into());
+                    }
                     self.seq_num = self
                         .seq_num
                         .checked_add(1)
@@ -1730,8 +1772,11 @@ impl<T: Write> Write for StreamCore<T> {
             if !self.frame_buf.has_payload_capacity() {
                 // A Body Frame must always leave a sequence number for
                 // the required End Frame. Check before encrypting or
-                // writing so that `u32::MAX` remains available as the
-                // terminal sequence number.
+                // writing so that the maximum counter remains available as
+                // the terminal sequence number.
+                if self.seq_num == MAX_FRAME_COUNTER {
+                    return Err(Error::new(ErrorKind::IntegerOverflow).into());
+                }
                 let next_seq_num = self
                     .seq_num
                     .checked_add(1)
@@ -1825,7 +1870,7 @@ impl<T: Seek + Read> StreamCore<T> {
             .start_seq_num
             .checked_add(frame_idx)
             .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
-        self.end_len = None;
+        self.end_payload_len = None;
 
         // A full End Frame represents an EOF whose logical payload offset
         // falls exactly at the next frame boundary. In that case there is no
@@ -1845,9 +1890,11 @@ impl<T: Seek + Read> StreamCore<T> {
                 .start_seq_num
                 .checked_add(previous_frame_idx)
                 .ok_or(Error::new(ErrorKind::IntegerOverflow))?;
-            self.end_len = None;
+            self.end_payload_len = None;
 
-            if !self.read_next_frame()? || self.end_len != Some(self.frame_buf.max_payload_len) {
+            if !self.read_next_frame()?
+                || self.end_payload_len != Some(self.frame_buf.max_payload_len)
+            {
                 return Err(Error::new(ErrorKind::UnexpectedEof));
             }
 
@@ -1859,7 +1906,7 @@ impl<T: Seek + Read> StreamCore<T> {
         // loaded Frame. Advance the expected sequence number for a Body
         // Frame so a read crossing the boundary consumes the following
         // Frame instead of loading this one again.
-        if self.end_len.is_none() {
+        if self.end_payload_len.is_none() {
             self.seq_num = self
                 .seq_num
                 .checked_add(1)
@@ -1867,7 +1914,7 @@ impl<T: Seek + Read> StreamCore<T> {
         }
 
         if frame_payload_off < self.frame_buf.payload_len
-            || (self.end_len.is_some() && frame_payload_off == self.frame_buf.payload_len)
+            || (self.end_payload_len.is_some() && frame_payload_off == self.frame_buf.payload_len)
         {
             self.payload_pos = frame_payload_off;
         } else {
@@ -1923,7 +1970,7 @@ impl<T: Seek + Read> Seek for StreamCore<T> {
                 if !self.read_next_frame()? {
                     return Err(Error::new(ErrorKind::UnexpectedEof).into());
                 }
-                if self.end_len.is_none() {
+                if self.end_payload_len.is_none() {
                     return Err(Error::new(ErrorKind::Truncation).into());
                 }
                 //

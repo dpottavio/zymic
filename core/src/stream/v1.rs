@@ -332,8 +332,8 @@ impl FrameBuf {
         );
         if expected_seq_num != decoded_seq_num {
             return Err(Error::new(ErrorKind::UnexpectedSeqNum(
-                expected_seq_num,
-                decoded_seq_num,
+                expected_seq_num.into(),
+                decoded_seq_num.into(),
             )));
         }
 
