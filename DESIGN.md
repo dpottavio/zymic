@@ -73,6 +73,80 @@ encoded as a new Stream.
 +--------+---------+---------+---------+
 ```
 
+## Header
+
+The Header contains the necessary metadata to derive the Data Key for
+a given Stream. Below is a binary specification of the Header. All
+integers are unsigned and interpreted in little-endian format.
+
+| Offset |    Field      |  Bytes |
+|--------|---------------|--------|
+|    0   | Magic Number  |      4 |
+|    4   | Version       |      1 |
+|    5   | Algorithm     |      2 |
+|    7   | Frame Length  |      1 |
+|    8   | Reserved      |      8 |
+|   16   | Nonce         |     16 |
+|   32   | Parent Key ID |     16 |
+|   48   | MAC           |     32 |
+
+### Magic Number
+A file signature with the value `0x6d797a2e` (ASCII for ".zym"). This
+identifies the file as conforming to the Zymic stream format.
+
+### Version
+Specifies the format version of the Header and Frame layout. Any
+incompatible changes—such as reinterpretation of existing fields or
+the addition of new fields—require incrementing this version number.
+The Version field MUST be encoded as `2`. Version 2 is incompatible
+with version 1.
+
+### Algorithm
+An unsigned integer specifying the combination of AEAD cipher and Data
+Key derivation algorithm in use. The Algorithm field defines the
+following value:
+
+| Value | AEAD        | Data Key Derivation | Nonce Bytes | Tag Bytes |
+|-------|-------------|---------------------|-------------|-----------|
+|   0   | AES-256-GCM | HKDF-SHA-256        |     12      |     16    |
+
+### Frame Length
+Specifies the maximum Frame size as a power of two, encoded as an
+exponent N, where:
+
+```
+Frame Length = 2^N (bytes)
+```
+
+Below is a table of supported Frame Length encodings:
+
+| Encoded N | Byte Length |
+|-----------|-------------|
+|    12     |     4096    |
+|    13     |     8192    |
+|    14     |    16384    |
+|    15     |    32768    |
+|    16     |    65536    |
+
+### Reserved
+Unused bytes reserved for future protocol extensions. Encoders MUST
+set all Reserved bytes to `0`. Decoders MUST include the Reserved
+bytes when verifying the Header MAC but otherwise ignore their values.
+
+### Nonce
+A 16-byte value used to derive the Stream's Data Key. It MUST NOT be
+reused for another Stream under the same Parent Key. The caller SHOULD
+generate it using a CSPRNG. Another construction MAY be used if it
+guarantees uniqueness.
+
+### Parent Key ID
+A 16-byte public identifier for the Parent Key used in Data Key
+derivation. See [Parent Key](#parent-key) sub-section for more detail.
+
+### MAC
+A Message Authentication Code used to authenticate the Header and
+confirm successful derivation under the supplied Parent Key.
+
 ## Frames
 
 A Frame represents a single encrypted segment within a Stream. There
@@ -211,80 +285,6 @@ The Sequence Number limit implies:
        v
 
 ```
-
-## Header
-
-The Header contains the necessary metadata to derive the Data Key for
-a given Stream. Below is a binary specification of the Header. All
-integers are unsigned and interpreted in little-endian format.
-
-| Offset |    Field      |  Bytes |
-|--------|---------------|--------|
-|    0   | Magic Number  |      4 |
-|    4   | Version       |      1 |
-|    5   | Algorithm     |      2 |
-|    7   | Frame Length  |      1 |
-|    8   | Reserved      |      8 |
-|   16   | Nonce         |     16 |
-|   32   | Parent Key ID |     16 |
-|   48   | MAC           |     32 |
-
-### Magic Number
-A file signature with the value `0x6d797a2e` (ASCII for ".zym"). This
-identifies the file as conforming to the Zymic stream format.
-
-### Version
-Specifies the format version of the Header and Frame layout. Any
-incompatible changes—such as reinterpretation of existing fields or
-the addition of new fields—require incrementing this version number.
-The Version field MUST be encoded as `2`. Version 2 is incompatible
-with version 1.
-
-### Algorithm
-An unsigned integer specifying the combination of AEAD cipher and Data
-Key derivation algorithm in use. The Algorithm field defines the
-following value:
-
-| Value | AEAD        | Data Key Derivation | Nonce Bytes | Tag Bytes |
-|-------|-------------|---------------------|-------------|-----------|
-|   0   | AES-256-GCM | HKDF-SHA-256        |     12      |     16    |
-
-### Frame Length
-Specifies the maximum Frame size as a power of two, encoded as an
-exponent N, where:
-
-```
-Frame Length = 2^N (bytes)
-```
-
-Below is a table of supported Frame Length encodings:
-
-| Encoded N | Byte Length |
-|-----------|-------------|
-|    12     |     4096    |
-|    13     |     8192    |
-|    14     |    16384    |
-|    15     |    32768    |
-|    16     |    65536    |
-
-### Reserved
-Unused bytes reserved for future protocol extensions. Encoders MUST
-set all Reserved bytes to `0`. Decoders MUST include the Reserved
-bytes when verifying the Header MAC but otherwise ignore their values.
-
-### Nonce
-A 16-byte value used to derive the Stream's Data Key. It MUST NOT be
-reused for another Stream under the same Parent Key. The caller SHOULD
-generate it using a CSPRNG. Another construction MAY be used if it
-guarantees uniqueness.
-
-### Parent Key ID
-A 16-byte public identifier for the Parent Key used in Data Key
-derivation. See [Parent Key](#parent-key) sub-section for more detail.
-
-### MAC
-A Message Authentication Code used to authenticate the Header and
-confirm successful derivation under the supplied Parent Key.
 
 ## Parent Key
 
