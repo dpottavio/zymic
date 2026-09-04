@@ -45,6 +45,12 @@ data. The protocol operates by dividing plaintext into discrete
 segments, each of which is independently encrypted using an AEAD
 cipher and the Stream's Data Key.
 
+Zymic is a variant of the [STREAM online authenticated-encryption
+construction](https://eprint.iacr.org/2015/189.pdf) described by Hoang
+et al. Like STREAM, it binds each segment's position and final-segment
+status through the AEAD nonce. Zymic additionally derives a unique
+Data Key for each Stream from its authenticated Header metadata.
+
 Each encrypted segment produces a ciphertext and an accompanying
 Authentication Tag. These are encapsulated into binary structures
 known as Frames. A series of these Frames, in order, constitutes a
@@ -86,7 +92,7 @@ integers are unsigned and interpreted in little-endian format.
 |    5   | Algorithm     |      2 |
 |    7   | Frame Length  |      1 |
 |    8   | Reserved      |      8 |
-|   16   | Nonce         |     16 |
+|   16   | Stream Nonce  |     16 |
 |   32   | Parent Key ID |     16 |
 |   48   | MAC           |     32 |
 
@@ -106,9 +112,12 @@ An unsigned integer specifying the combination of AEAD cipher and Data
 Key derivation algorithm in use. The Algorithm field defines the
 following value:
 
-| Value | AEAD        | Data Key Derivation | Nonce Bytes | Tag Bytes |
-|-------|-------------|---------------------|-------------|-----------|
-|   0   | AES-256-GCM | HKDF-SHA-256        |     12      |     16    |
+| Value | AEAD        | Data Key Derivation | AEAD Nonce Bytes | Tag Bytes |
+|-------|-------------|---------------------|------------------|-----------|
+|   0   | AES-256-GCM | HKDF-SHA-256        |        12        |     16    |
+
+Algorithm `0` uses AES-256-GCM as specified by [NIST SP
+800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
 
 ### Frame Length
 Specifies the maximum Frame size as a power of two, encoded as an
@@ -133,11 +142,11 @@ Unused bytes reserved for future protocol extensions. Encoders MUST
 set all Reserved bytes to `0`. Decoders MUST include the Reserved
 bytes when verifying the Header MAC but otherwise ignore their values.
 
-### Nonce
-A 16-byte value used to derive the Stream's Data Key. It MUST NOT be
-reused for another Stream under the same Parent Key. The caller SHOULD
-generate it using a CSPRNG. Another construction MAY be used if it
-guarantees uniqueness.
+### Stream Nonce
+A 16-byte value used to derive the Stream's Data Key. The Stream Nonce
+MUST NOT be reused for another Stream under the same Parent Key. The
+caller SHOULD generate it using a CSPRNG. Another construction MAY be
+used if it guarantees uniqueness.
 
 ### Parent Key ID
 A 16-byte public identifier for the Parent Key used in Data Key
@@ -162,7 +171,13 @@ A Stream consists of zero or more Body Frames followed by exactly one
 End Frame. If the End Frame is missing, the Stream is considered
 truncated and invalid.
 
-Any bytes following the End Frame are not part of the Stream.
+The End Frame can be shorter than the configured Frame Length, but its
+serialized length is not encoded within the Stream. The End Frame
+contains all remaining bytes through the Stream's EOF, which establishes
+its serialized length. A decoder MUST reject the Stream if that length
+exceeds Frame Length. After the Sequence Number, the bytes preceding the
+trailing Authentication Tag are the Payload. The Stream's encoded length
+does not need to be known in advance.
 
 Truncation can only be detected by authenticating Frames through the
 terminal End Frame. Successfully decrypting a prefix of the Stream
@@ -178,12 +193,11 @@ and will cause decryption to fail.
 The table below is a binary specification of a Frame. All integers are
 unsigned and interpreted in little-endian format.
 
-|    Offset     |       Field      |      Bytes      | AAD  | Nonce |
-|---------------|------------------|-----------------|------|-------|
-|      0        | Sequence Number  |       4         |      |  ✅   |
-|      4        | End Length       |       4         |  ✅  |       |
-|      8        | Payload          |  (conditional)  |      |       |
-| (conditional) | Tag              |   (algorithm)   |      |       |
+|    Offset     |       Field      |      Bytes      | Frame AEAD Nonce |
+|---------------|------------------|-----------------|------------------|
+|      0        | Sequence Number  |       8         |        ✅        |
+|      8        | Payload          |  (conditional)  |                  |
+| (conditional) | Tag              |   (algorithm)   |                  |
 
 ### Frame Overhead
 Frame Overhead is the combined serialized length of all non-Payload
@@ -193,52 +207,74 @@ fields in a Frame. It is computed as:
 Frame Overhead = 8 + Tag Length
 ```
 
-Where 8 is the combined length of the Sequence Number and End Length
-fields. Tag Length is determined by the Algorithm field in the Stream
-Header. For Algorithm `0`, Frame Overhead is 24 bytes.
+Where 8 is the length of the Sequence Number field. Tag Length is
+determined by the Algorithm field in the Stream Header. For Algorithm
+`0`, Frame Overhead is 24 bytes.
 
 ### Sequence Number
-An unsigned integer used to specify the order of a Stream. The decoder
-MUST verify that the observed Sequence Number is strictly increasing
-with no gaps; any reordering or omission invalidates the stream.
+The Sequence Number is a 64-bit value containing a 63-bit Frame Counter
+and a one-bit End Frame flag. The most significant bit is the End Frame
+flag, and the remaining bits encode the Frame Counter:
 
-Sequence Numbers are 32-bit values and MUST begin at `0` for the
-first Frame of a Stream. The encoder MUST increment the Sequence
-Number by exactly `1` for each subsequent Frame, including the End
-Frame.
+|  Bit Offset   |       Field     |  Width (bits) |
+|---------------|-----------------|---------------|
+|      0        | Frame Counter   |      63       |
+|     63        | End Frame Flag  |       1       |
 
-The Sequence Number determines the AEAD nonce and therefore MUST NOT
-wrap under the same Data Key. If the next Frame would require a
-Sequence Number of `2^32`, the encoder MUST fail and MUST NOT emit any
-additional Frames under that Data Key.
+The End Frame flag MUST be clear for a Body Frame and set for the End
+Frame. The Frame Counter MUST begin at `0` and increase by exactly `1`
+for every subsequent Frame. The decoder MUST verify that the observed
+Frame Counter equals the expected counter; any reordering, duplication,
+or omission invalidates the Stream.
 
-The AEAD nonce is the Sequence Number encoded as an unsigned
-little-endian integer with the width specified by Nonce Bytes for the
-selected [Algorithm](#algorithm). Nonce Bytes MUST be at least 4.
+The complete Sequence Number, including the End Frame flag, determines
+the Frame AEAD Nonce. It is encoded as an unsigned little-endian integer
+with the width specified by AEAD Nonce Bytes for the selected
+[Algorithm](#algorithm). AEAD Nonce Bytes MUST be at least 8. A change
+to either the Frame Counter or End Frame flag therefore causes
+authentication to fail.
+
+For Algorithm `0`, the 12-byte Frame AEAD Nonce is encoded exactly as:
+
+```
+Frame AEAD Nonce = LE64(Sequence Number) || 0x00000000
+```
+
+The Frame Counter MUST NOT wrap under the same Data Key. If another
+Frame would require a Frame Counter of `2^63`, the encoder MUST fail and
+MUST NOT emit any additional Frames under that Data Key.
 
 Because each Sequence Number occurs exactly once in an immutable
 Stream, this construction produces a unique nonce for every Frame
 encrypted under a Data Key.
 
-### End Length
-Specifies the length of the payload only if the Frame is an End
-Frame. For Body Frames, this field is always set to `0xffffffff` (a
-reserved constant).
-
-The payload length of a Body Frame is derived as:
-
-Payload Length = Frame Length - Frame Overhead
-
-The serialized End Length field is included as AAD.
-
 ### Payload
-The ciphertext produced by AEAD encryption. Its length is determined
-as described in the End Length section.
+The ciphertext produced by AEAD encryption. A Body Frame has a payload
+length of:
+
+```
+Payload Length = Frame Length - Frame Overhead
+```
+
+After reading the Sequence Number, an End Frame's serialized length is
+determined by Stream EOF and MUST be within:
+
+```
+Frame Overhead <= End Frame Length <= Frame Length
+```
+
+Accordingly, its payload length is between `0` and `Frame Length -
+Frame Overhead`, inclusive, and is calculated as:
+
+```
+Payload Length = End Frame Length - Frame Overhead
+```
 
 ### Tag
 The Authentication Tag generated by the AEAD cipher, authenticating
-the Metadata and Payload. It is verified during decryption to ensure
-integrity and authenticity.
+the Payload under the complete Sequence Number used as the Frame AEAD
+Nonce. It is verified during decryption to ensure integrity and
+authenticity.
 
 The size of the Tag field is determined by the AEAD algorithm used by
 the Stream. Currently only AES-256-GCM is supported, which has a Tag
@@ -250,15 +286,18 @@ Each Stream is encrypted and decrypted using a unique, one-time-use
 Data Key. These Data Keys are derived from a long-term Parent Key
 using a Key Derivation Function (KDF).
 
-The Sequence Number limit implies:
+The Frame Counter imposes the following structural format limits:
 
-* A Stream can contain at most `2^32` total Frames, including the End
+* A Stream can contain at most `2^63` total Frames, including the End
   Frame.
 
-* A Stream can contain at most `2^32 - 1` Body Frames.
+* A Stream can contain at most `2^63 - 1` Body Frames.
 
-* The maximum plaintext capacity of a Stream is `2^32 * (Frame Length -
-  Frame Overhead)` bytes.
+* The maximum plaintext capacity permitted by the format is `2^63 *
+  (Frame Length - Frame Overhead)` bytes.
+
+Implementations MUST also enforce any lower per-key or per-invocation
+usage limits required by the selected Algorithm.
 
 ```
 +------------+
@@ -381,7 +420,7 @@ Header Metadata =
     Algorithm     (2 bytes, little-endian) ||
     Frame Length  (1 byte)                 ||
     Reserved      (8 bytes)                ||
-    Nonce         (16 bytes)               ||
+    Stream Nonce  (16 bytes)               ||
     Parent Key ID (16 bytes)
 
 Header =
@@ -452,7 +491,7 @@ prevent replay attacks in which an attacker replaces the current
 stored Stream with an older, previously valid Stream derived from the
 same Parent Key. Applications that require replay attack protection
 MUST enforce an external, authenticated anti-replay policy appropriate
-to their use
+to their use.
 
 ## Stream Encoding Algorithm
 
@@ -461,7 +500,7 @@ Plaintext data is encoded into a stream using the following steps.
 Input Parameters:
 
 * Frame Length -- Total serialized length of each Body Frame.
-* Nonce -- 16-byte cryptographic nonce used in key derivation.
+* Stream Nonce -- 16-byte cryptographic nonce used in key derivation.
 * Parent Key -- The Parent Key ID and secret key material.
 * Plaintext -- The data to be encrypted and encoded into the Stream.
 
@@ -480,30 +519,33 @@ Payload Length. If the Plaintext is empty, create one empty final chunk.
 
 3. Encode each Plaintext chunk into a Frame. For each chunk:
 
-    1. Assign the Frame sequence number.
+    1. Assign the Frame Counter.
 
-        1. The first Frame MUST use `0`. Increment the Sequence Number by
+        1. The first Frame MUST use `0`. Increment the Frame Counter by
            exactly `1` for each subsequent Frame.
 
-        2. The value MUST be between `0` and `2^32 - 1`. The encoder MUST
-           fail before another Frame would require `2^32`.
+        2. The value MUST be between `0` and `2^63 - 1`. The encoder MUST
+           fail before another Frame would require `2^63`.
 
-    2. Assign Frame type and End Length.
+    2. Encode the Sequence Number.
 
-        1. If this is the final chunk, encode it as the End Frame and set
-           End Length to the chunk's plaintext length.
+        1. If this is the final chunk, encode it as the End Frame by
+           encoding the Frame Counter in the low 63 bits of the Sequence
+           Number and setting the Sequence Number's most significant bit.
 
-        2. Otherwise, encode it as a Body Frame and set End Length to
-           `0xffffffff`.
+        2. Otherwise, encode it as a Body Frame by encoding the Frame
+           Counter in the low 63 bits of the Sequence Number and leaving
+           the Sequence Number's most significant bit clear.
 
     3. Encrypt the payload.
 
         1. Encrypt the chunk using the Data Key and an AEAD cipher.
 
-        2. Construct the AEAD nonce from the Sequence Number as
-           specified in the [Sequence Number](#sequence-number) section.
+        2. Construct the Frame AEAD Nonce from the complete Sequence
+           Number, including the End Frame flag, as specified in the
+           [Sequence Number](#sequence-number) section.
 
-        3. Include the four-byte little-endian End Length field as AAD.
+        3. Use an empty AAD value.
 
     4. Attach the AEAD-generated Tag to the Frame.
 
@@ -516,7 +558,9 @@ Input Parameters:
 * Parent Key -- The Parent Key ID and secret key material.
 
 * Stream -- A previously encoded and serialized Zymic Stream,
-  including the Header and all Frames.
+  including the Header and all Frames, presented through an input that
+  reaches EOF at the end of the Stream. The byte offset of that EOF does
+  not need to be known in advance.
 
 Steps:
 1. Validate the Header and derive the Data Key.
@@ -534,51 +578,60 @@ Steps:
 
 2. Process each Frame:
 
-    1. Validate Sequence Number
+    1. Parse and validate the Sequence Number.
 
-        * Require the observed Sequence Number to equal the expected
-        Sequence Number, beginning with `0`.
+        * Extract the End Frame flag and Frame Counter from the serialized
+          Sequence Number.
 
-        * Reject a missing, duplicated, or reordered Frame.
+        * Require the observed Frame Counter to equal the expected Frame
+          Counter, beginning with `0`. Reject a missing, duplicated, or
+          reordered Frame.
 
-    2. Validate the End Length and determine Frame type
+        * The Sequence Number, derived Frame type, Payload boundary, and
+          Authentication Tag MUST be treated as unauthenticated until the
+          Frame has been successfully authenticated.
 
-        1. If End Length == `0xffffffff`, the Frame is a Body Frame. Its
+    2. Determine the Frame length.
+
+        1. If the End Frame flag is clear, the Frame is a Body Frame. Its
            total serialized length MUST equal Frame Length, and its payload
-           length must equal:
+           length MUST equal:
            ```
            Frame Length - Frame Overhead
            ```
 
-        2. Otherwise, the Frame is an End Frame. The End Length value
-           specifies the actual payload length and MUST be within:
+        2. If the End Frame flag is set, the Frame is an End Frame. All
+           remaining bytes through Stream EOF belong to that Frame. Reject
+           the Stream if its serialized length exceeds Frame Length. Before
+           separating the Payload and Authentication Tag, require its
+           serialized length to be within:
+           ```
+           Frame Overhead <= End Frame Length <= Frame Length
+           ```
+           The final Tag Length bytes are the Authentication Tag, and all
+           preceding bytes after the Sequence Number are the Payload. The
+           payload length MUST be within:
            ```
            0 <= Payload Length <= Frame Length - Frame Overhead
            ```
-           The total serialized length MUST equal:
-           ```
-           End Length + Frame Overhead
-           ```
-
-           Any bytes following the End Frame are not part of the current
-           Stream, and their presence does not invalidate it.
 
     3. Decrypt the payload.
 
-        1. Construct the AEAD nonce from the Sequence Number as
-           specified in the [Sequence Number](#sequence-number) section.
+        1. Construct the Frame AEAD Nonce from the complete Sequence
+           Number, including the End Frame flag, as specified in the
+           [Sequence Number](#sequence-number) section.
 
-        2. Include the four-byte serialized End Length field as AAD.
+        2. Use an empty AAD value.
 
-        3. Decrypt the Payload using the Data Key, the constructed
-           AEAD nonce, and the attached Authentication Tag.
+        3. Decrypt the Payload using the Data Key, the constructed Frame
+           AEAD Nonce, and the attached Authentication Tag.
 
         4. If authentication fails, raise an integrity error and abort
            without releasing that Frame's plaintext.
 
         5. After a Body Frame is authenticated, increment the expected
-           Sequence Number by exactly `1`. Reject the Stream if
-           incrementing would overflow. Stop processing Frames after
+           Frame Counter by exactly `1`. Reject the Stream if incrementing
+           would exceed `2^63 - 1`. Stop processing Frames after
            authenticating the End Frame.
 
 3. Validate Stream termination.
@@ -630,15 +683,17 @@ little-endian unsigned integer.
 
 ### argon
 An integer preset identifier representing the Argon2id
-configuration. Argon2id Version 1.3 MUST be used with a 32-byte output.
-The presets map to the memory in KiB (M), parallelism (P), and
-iteration count (T) as follows:
+configuration. Argon2id with version parameter `v = 0x13` MUST be used
+with a 32-byte output. The presets map to the memory in KiB (M),
+parallelism (P), and iteration count (T) as follows:
 
 | Setting Value |  M   | P | T |       Description       |
 |---------------|------|---|---|-------------------------|
 |   1           | 2^16 | 4 | 3 | CPU-intensive           |
 |   2           | 2^18 | 4 | 1 | Memory-intensive        |
 |   3           |  8   | 1 | 1 | Insecure (for testing)  |
+
+Key File decoders MUST reject any other Setting Value.
 
 Note: Setting 3 is for development or testing only and MUST NOT be
 used in production environments.
