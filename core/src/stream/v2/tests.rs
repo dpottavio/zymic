@@ -4,8 +4,8 @@ use super::{
     frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameHeader, FrameHeaderBuilder,
     FrameLength, Header, HeaderBuilder, HeaderNonce, ALGO_OFFSET, END_FRAME_MASK, FRAME_HEADER_LEN,
     FRAME_LEN_LEN, FRAME_LEN_OFFSET, FRAME_META_LEN, FRAME_TAG_LEN, HEADER_MAC_OFFSET,
-    KEY_ID_OFFSET, MAGIC_NUM, MAX_FRAME_COUNTER, NONCE_OFFSET, PAYLOAD_OFFSET, RESERVED_LEN,
-    RESERVED_OFFSET, SEQ_NUM_LEN, SEQ_NUM_OFFSET, VERSION, VERSION_OFFSET,
+    KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET, PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET,
+    SEQ_NUM_LEN, SEQ_NUM_OFFSET, VERSION, VERSION_OFFSET,
 };
 use crate::{
     byte_array,
@@ -16,7 +16,7 @@ use crate::{
 use alloc::{format, vec, vec::Vec};
 
 #[cfg(feature = "std")]
-use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriterBuilder};
+use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriterBuilder, MAX_FRAME_COUNTER};
 
 #[cfg(feature = "std")]
 use crate::error::Error;
