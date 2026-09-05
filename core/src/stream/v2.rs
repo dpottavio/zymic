@@ -1404,6 +1404,10 @@ impl<T> StreamCore<T> {
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<T> ZymicReader<T> {
     /// Consume this reader and return the wrapped input.
+    ///
+    /// After a full-length End Frame has been authenticated, the returned
+    /// input remains positioned immediately after that Frame. Any subsequent
+    /// bytes in the enclosing input have not been read.
     pub fn into_inner(self) -> T {
         self.core.into_inner()
     }
@@ -1615,14 +1619,12 @@ impl<T: Read> StreamCore<T> {
     ///
     /// Returns `false` if the end-of-file was reached on the underlying
     /// `inner` type and no data was copied into the frame buffer.
+    /// A full-length End Frame is authenticated without reading beyond its
+    /// configured Frame Length.
     ///
     /// # Errors
     ///
     /// * If the stream reaches an unexpected end of file.
-    ///
-    /// * If an End Frame exceeds the configured Frame Length
-    ///   ([`ErrorKind::InvalidBufLength`]). This includes trailing data after
-    ///   an End Frame that exactly fills the frame buffer.
     ///
     /// * For any failure reading the underlying inner type.
     ///
@@ -1660,12 +1662,6 @@ impl<T: Read> StreamCore<T> {
         }
 
         let frame_header = self.frame_buf.decrypt(self.seq_num)?;
-        if frame_header.is_end() && total_len == self.frame_buf.frame_len {
-            let mut trailing = [0u8; 1];
-            if self.inner.read(&mut trailing)? != 0 {
-                return Err(Error::new(ErrorKind::InvalidBufLength));
-            }
-        }
         self.end_payload_len = frame_header.is_end().then_some(self.frame_buf.payload_len);
         self.payload_pos = 0;
 

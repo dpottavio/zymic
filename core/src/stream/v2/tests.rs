@@ -1114,7 +1114,7 @@ fn stream_read_eof() {
 
 #[cfg(feature = "std")]
 #[test]
-fn stream_rejects_bytes_after_full_end_frame() {
+fn stream_leaves_bytes_after_full_end_frame_unread() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
@@ -1126,13 +1126,15 @@ fn stream_rejects_bytes_after_full_end_frame() {
     writer.write_all(&plain_txt).unwrap();
     writer.eof().unwrap();
     let mut cipher_txt = writer.into_inner();
+    let stream_len = cipher_txt.len();
     cipher_txt.push(0xff);
 
     let mut reader = StreamCore::new(Cursor::new(cipher_txt), &header);
     let mut decoded = Vec::new();
-    let err = reader.read_to_end(&mut decoded).unwrap_err();
-    let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
-    assert!(matches!(inner.kind(), ErrorKind::InvalidBufLength));
+    reader.read_to_end(&mut decoded).unwrap();
+
+    assert_eq!(decoded, plain_txt);
+    assert_eq!(reader.into_inner().position(), stream_len as u64);
 }
 
 #[cfg(feature = "std")]
