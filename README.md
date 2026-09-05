@@ -1,10 +1,11 @@
 # Zymic
 
-Zymic is a streaming authenticated encryption format for securing
-data at rest.  It uses AEAD (Authenticated Encryption with Associated
-Data) to provide both confidentiality and integrity. The format is
-[openly specified](./DESIGN.md), with a reference implementation in
-Rust.
+Zymic is a streaming authenticated encryption format for securing data
+at rest. It's a variant of the [STREAM online authenticated-encryption
+construction](https://eprint.iacr.org/2015/189.pdf) and uses AEAD
+(Authenticated Encryption with Associated Data) to provide both
+confidentiality and integrity. The format is [openly
+specified](./DESIGN.md), with a reference implementation in Rust.
 
 This repro contains the following Rust crates:
 
