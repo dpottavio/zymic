@@ -582,11 +582,10 @@ fn derive_data_key(parent_key: &ParentKey, info: &[u8]) -> (HeaderMac, aes_gcm::
 
 /// Construct an algorithm-sized AEAD nonce from a complete serialized Frame
 /// Sequence Number, including the End Frame flag. The Sequence Number is
-/// encoded as an unsigned little-endian integer and zero-extended to the nonce
-/// width.
+/// encoded as an unsigned little-endian integer after a 32-bit zero fixed field.
 fn frame_nonce(seq_num: u64) -> AesNonce<FrameNonceLen> {
     let mut nonce = AesNonce::<FrameNonceLen>::default();
-    nonce[..SEQ_NUM_LEN].copy_from_slice(&seq_num.to_le_bytes());
+    nonce[4..4 + SEQ_NUM_LEN].copy_from_slice(&seq_num.to_le_bytes());
     nonce
 }
 

@@ -197,6 +197,7 @@ unsigned and interpreted in little-endian format.
 | (conditional) | Tag              |   (algorithm)   |                  |
 
 ### Frame Overhead
+
 Frame Overhead is the combined serialized length of all non-Payload
 fields in a Frame. It is computed as:
 
@@ -209,6 +210,7 @@ determined by the Algorithm field in the Stream Header. For Algorithm
 `0`, Frame Overhead is 24 bytes.
 
 ### Sequence Number
+
 The Sequence Number is a 64-bit value containing a 63-bit Frame Counter
 and a one-bit End Frame flag. The most significant bit is the End Frame
 flag, and the remaining bits encode the Frame Counter:
@@ -221,29 +223,35 @@ flag, and the remaining bits encode the Frame Counter:
 The End Frame flag MUST be clear for a Body Frame and set for the End
 Frame. The Frame Counter MUST begin at `0` and increase by exactly `1`
 for every subsequent Frame. The decoder MUST verify that the observed
-Frame Counter equals the expected counter; any reordering, duplication,
-or omission invalidates the Stream.
-
-The complete Sequence Number, including the End Frame flag, determines
-the Frame AEAD Nonce. It is encoded as an unsigned little-endian integer
-with the width specified by AEAD Nonce Bytes for the selected
-[Algorithm](#algorithm). AEAD Nonce Bytes MUST be at least 8. A change
-to either the Frame Counter or End Frame flag therefore causes
-authentication to fail.
-
-For Algorithm `0`, the 12-byte Frame AEAD Nonce is encoded exactly as:
-
-```
-Frame AEAD Nonce = LE64(Sequence Number) || 0x00000000
-```
+Frame Counter equals the expected counter; any reordering,
+duplication, or omission invalidates the Stream.
 
 The Frame Counter MUST NOT wrap under the same Data Key. If another
-Frame would require a Frame Counter of `2^63`, the encoder MUST fail and
-MUST NOT emit any additional Frames under that Data Key.
+Frame would require a Frame Counter of `2^63`, the encoder MUST fail
+and MUST NOT emit any additional Frames under that Data Key.
 
-Because each Sequence Number occurs exactly once in an immutable
-Stream, this construction produces a unique nonce for every Frame
-encrypted under a Data Key.
+#### AES-GCM IV Construction
+
+For Algorithm `0`, the 96-bit IV MUST use the following layout, with
+offsets measured from the start of the IV:
+
+| Bit Offset | Field           | Width (bits) | Encoding      |
+|------------|-----------------|--------------|---------------|
+| 0          | Fixed           | 32           | All zeros     |
+| 32         | Sequence Number | 64           | Little-endian |
+
+This uses the deterministic construction in [NIST SP
+800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf)
+section 8.2.1, with a 32-bit fixed field and a 64-bit invocation field.
+NIST recommends, but does not require, these field positions; Zymic fixes
+them as part of Algorithm `0`.
+
+Because Zymic uses deterministic 96-bit IVs, the general 2^32
+invocation limit in [NIST SP
+800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf)
+section 8.3 does not apply. Zymic permits at most 2^63 Frames per Data
+Key, including the End Frame, because its 63-bit Frame Counter MUST
+NOT wrap.
 
 ### Payload
 
