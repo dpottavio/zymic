@@ -232,8 +232,8 @@ and MUST NOT emit any additional Frames under that Data Key.
 
 #### AES-GCM IV Construction
 
-For Algorithm `0`, the 96-bit IV MUST use the following layout, with
-offsets measured from the start of the IV:
+For Algorithm `0`, the 12 byte (96-bit) AEAD Nonce MUST use the
+following layout, with offsets measured from the start of the Nonce:
 
 | Bit Offset | Field           | Width (bits) | Encoding      |
 |------------|-----------------|--------------|---------------|
