@@ -242,16 +242,10 @@ following layout, with offsets measured from the start of the Nonce:
 
 This uses the deterministic construction in [NIST SP
 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf)
-section 8.2.1, with a 32-bit fixed field and a 64-bit invocation field.
-NIST recommends, but does not require, these field positions; Zymic fixes
-them as part of Algorithm `0`.
-
-Because Zymic uses deterministic 96-bit IVs, the general 2^32
-invocation limit in [NIST SP
-800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf)
-section 8.3 does not apply. Zymic permits at most 2^63 Frames per Data
-Key, including the End Frame, because its 63-bit Frame Counter MUST
-NOT wrap.
+section 8.2.1, with a 32-bit fixed field and a 64-bit invocation
+field. As per section 8.3, Zymic is permitted at most 2^63 Frames per
+Data Key, including the End Frame. This is because the Frame Counter
+is 63-bits and MUST NOT wrap.
 
 ### Payload
 
@@ -554,8 +548,6 @@ Payload Length. If the Plaintext is empty, create one empty final chunk.
            Number, including the End Frame flag, as specified in the
            [Sequence Number](#sequence-number) section.
 
-        3. Use an empty AAD value.
-
     4. Attach the AEAD-generated Tag to the Frame.
 
 ### Stream Decoding
@@ -629,15 +621,14 @@ Steps:
            Number, including the End Frame flag, as specified in the
            [Sequence Number](#sequence-number) section.
 
-        2. Use an empty AAD value.
 
-        3. Decrypt the Payload using the Data Key, the constructed Frame
+        2. Decrypt the Payload using the Data Key, the constructed Frame
            AEAD Nonce, and the attached Authentication Tag.
 
-        4. If authentication fails, raise an integrity error and abort
+        3. If authentication fails, raise an integrity error and abort
            without releasing that Frame's plaintext.
 
-        5. After a Body Frame is authenticated, increment the expected
+        4. After a Body Frame is authenticated, increment the expected
            Frame Counter by exactly `1`. Reject the Stream if incrementing
            would exceed `2^63 - 1`. Stop processing Frames after
            authenticating the End Frame.
