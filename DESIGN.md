@@ -621,7 +621,6 @@ Steps:
            Number, including the End Frame flag, as specified in the
            [Sequence Number](#sequence-number) section.
 
-
         2. Decrypt the Payload using the Data Key, the constructed Frame
            AEAD Nonce, and the attached Authentication Tag.
 
