@@ -58,11 +58,9 @@ pub enum ArgonSetting {
     ///
     /// m = 2^18, p = 4, t = 1
     Mem = 2,
-    /// Minimum setting. This setting uses the fewest resources for
-    /// computing Argon hashes. As a result, this is the **least
-    /// secure** setting but also the most performant. This should
-    /// only be used for testing or use-cases where the security of
-    /// Argon computation is not necessary.
+    /// Minimal Argon2id parameters for development and testing only.
+    ///
+    /// This preset is insecure and MUST NOT be used in production.
     ///
     /// m = 8, p = 1, t = 1
     Min = 3,

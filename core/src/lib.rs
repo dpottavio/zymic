@@ -10,15 +10,17 @@
 //!
 //! # Getting Started
 //!
-//! If you’re on `std`, start with the [`stream`] module and the
-//! [`ZymicReader`] and [`ZymicWriter`] types, which implement the
-//! appropriate `std::io` traits for file-like access. For embedded /
-//! `no_std` environments, use [`FrameBuf`] to build and parse
+#![cfg_attr(
+    feature = "std",
+    doc = "Start with the [`stream`] module and the
+[`crate::stream::ZymicReader`] and [`crate::stream::ZymicWriter`] types,
+which implement the appropriate [`std::io`] traits for file-like access.
+"
+)]
+//! For embedded / `no_std` environments, use [`FrameBuf`] to build and parse
 //! encrypted frames directly.
 //!
 //! [`stream`]: crate::stream
-//! [`ZymicReader`]: crate::stream::ZymicReader
-//! [`ZymicWriter`]: crate::stream::ZymicWriter
 //! [`FrameBuf`]: crate::stream::FrameBuf
 //!
 //! # Stream Immutability

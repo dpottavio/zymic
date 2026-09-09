@@ -4,7 +4,14 @@
 //!
 //! This module is intentionally isolated from the current stream
 //! implementation. Applications that need to decode an existing v1 stream
-//! must opt into the `v1` feature and select [`Reader`] explicitly.
+//! must opt into the `v1` feature and select this module explicitly.
+//! Use [`FrameBuf`] to decode individual frames, including without `std`.
+//!
+#![cfg_attr(
+    feature = "std",
+    doc = "Use [`Reader`] for streaming I/O with `std`.
+"
+)]
 //! New streams must be encoded with [`crate::stream::v2`].
 
 use crate::{

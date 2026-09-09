@@ -459,7 +459,7 @@ impl<'a> ByteCursor<'a> {
     }
 
     /// Read a 8 byte integer in little-endian format and return a
-    /// u32. The cursor position is advanced by 8 bytes. Currently
+    /// u64. The cursor position is advanced by 8 bytes. Currently
     /// only used for unit tests.
     #[cfg(test)]
     pub fn get_u64_le(&mut self) -> u64 {
