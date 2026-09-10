@@ -460,6 +460,8 @@ fn precommit() -> io::Result<()> {
             "--",
             "--cfg",
             "docsrs",
+            "-D",
+            "warnings",
         ],
         vec!["hack", "test", "--no-run", "--feature-powerset"],
     ];

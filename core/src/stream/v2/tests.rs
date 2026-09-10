@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 
 use super::{
-    frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameHeader, FrameHeaderBuilder,
-    FrameLength, Header, HeaderBuilder, HeaderNonce, ALGO_OFFSET, END_FRAME_MASK, FRAME_HEADER_LEN,
-    FRAME_LEN_LEN, FRAME_LEN_OFFSET, FRAME_META_LEN, FRAME_TAG_LEN, HEADER_MAC_OFFSET,
-    KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET, PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET,
-    SEQ_NUM_LEN, SEQ_NUM_OFFSET, VERSION, VERSION_OFFSET,
+    frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameLength, Header, HeaderBuilder,
+    HeaderNonce, SequenceNumber, ALGO_OFFSET, END_FRAME_MASK, FRAME_LEN_LEN, FRAME_LEN_OFFSET,
+    FRAME_META_LEN, FRAME_TAG_LEN, HEADER_MAC_OFFSET, KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET,
+    PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET, SEQ_NUM_LEN, SEQ_NUM_OFFSET, VERSION,
+    VERSION_OFFSET,
 };
 use crate::{
     byte_array,
@@ -16,7 +16,7 @@ use crate::{
 use alloc::{format, vec, vec::Vec};
 
 #[cfg(feature = "std")]
-use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriterBuilder, MAX_FRAME_COUNTER};
+use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriterBuilder, MAX_FRAME_INDEX};
 
 #[cfg(feature = "std")]
 use crate::error::Error;
@@ -56,11 +56,11 @@ fn entropy(bytes: &[u8]) -> f64 {
 /// Validate the binary structure of a frame that has been encoded
 /// with a frame header and tag. This does not validate the
 /// payload contents.
-fn validate_frame_bytes(frame: &[u8], metadata: &FrameHeader) {
+fn validate_frame_bytes(frame: &[u8], seq_num: &SequenceNumber) {
     let mut frame_buf = ByteCursor::new(frame);
 
     let seq = frame_buf.get_u64_le();
-    assert_eq!(seq, metadata.encoded_seq_num());
+    assert_eq!(seq, seq_num.encoded());
     let payload_len = frame.len() - FRAME_META_LEN;
     assert_eq!(FRAME_TAG_LEN + payload_len, frame_buf.remaining());
 }
@@ -127,7 +127,7 @@ fn validate_stream_body(stream_body: &[u8], plain_txt_len: usize, frame_len: Fra
     let max_seq_num = frame_count - 1;
     for (seq_num, frame) in stream_body.chunks(frame_len.as_usize()).enumerate() {
         let is_end = seq_num == max_seq_num;
-        let metadata = FrameHeader::new(seq_num.try_into().unwrap(), is_end);
+        let metadata = SequenceNumber::new(seq_num.try_into().unwrap(), is_end);
         validate_frame_bytes(frame, &metadata);
     }
 }
@@ -268,14 +268,11 @@ fn header_getters() {
 #[test]
 fn format_v2() {
     assert_eq!(VERSION, 2);
-    assert_eq!(FRAME_HEADER_LEN, 8);
+    assert_eq!(SEQ_NUM_LEN, 8);
     assert_eq!(FRAME_META_LEN, 24);
-    assert_eq!(
-        FrameHeader::new(5, true).encoded_seq_num(),
-        END_FRAME_MASK | 5
-    );
+    assert_eq!(SequenceNumber::new(5, true).encoded(), END_FRAME_MASK | 5);
 
-    let nonce = frame_nonce(0x8123_4567_89ab_cdef);
+    let nonce = frame_nonce([0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x81]);
     assert_eq!(
         &nonce[..],
         &[0, 0, 0, 0, 0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x81]
@@ -283,9 +280,89 @@ fn format_v2() {
 }
 
 #[test]
+fn seq_num_default() {
+    let seq_num = SequenceNumber::default();
+    assert_eq!(seq_num.frame_idx(), 0);
+    assert!(!seq_num.is_end());
+    assert_eq!(seq_num.to_bytes(), [0; 8]);
+}
+
+#[test]
+fn seq_num_constructors() {
+    for frame_idx in [0, 1, 0x0123_4567_89ab_cdef, (1u64 << 63) - 1] {
+        for is_end in [false, true] {
+            let explicit = SequenceNumber::new(frame_idx, is_end);
+            let named = if is_end {
+                SequenceNumber::for_end(frame_idx)
+            } else {
+                SequenceNumber::for_body(frame_idx)
+            };
+
+            for seq_num in [explicit, named] {
+                assert_eq!(seq_num.frame_idx(), frame_idx);
+                assert_eq!(seq_num.is_end(), is_end);
+            }
+        }
+    }
+}
+
+#[test]
+fn seq_num_byte_encoding() {
+    // Fixed wire bytes check endianness and flag placement independently
+    // of the encoder and decoder agreeing with each other.
+    let cases = [
+        (0, false, [0; 8]),
+        (0, true, [0, 0, 0, 0, 0, 0, 0, 0x80]),
+        (
+            0x0123_4567_89ab_cdef,
+            false,
+            [0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x01],
+        ),
+        (
+            0x0123_4567_89ab_cdef,
+            true,
+            [0xef, 0xcd, 0xab, 0x89, 0x67, 0x45, 0x23, 0x81],
+        ),
+        (
+            (1u64 << 63) - 1,
+            false,
+            [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f],
+        ),
+        ((1u64 << 63) - 1, true, [0xff; 8]),
+    ];
+
+    for (frame_idx, is_end, bytes) in cases {
+        assert_eq!(SequenceNumber::new(frame_idx, is_end).to_bytes(), bytes);
+
+        let decoded = SequenceNumber::from_bytes(bytes);
+        assert_eq!(decoded.frame_idx(), frame_idx);
+        assert_eq!(decoded.is_end(), is_end);
+        assert_eq!(decoded.to_bytes(), bytes);
+    }
+}
+
+#[test]
 #[should_panic(expected = "frame counter must fit in 63 bits")]
-fn frame_header_rejects_counter_with_end_bit_set() {
-    FrameHeaderBuilder::new(END_FRAME_MASK);
+fn seq_num_rejects_counter_with_end_bit_set() {
+    SequenceNumber::new(END_FRAME_MASK, false);
+}
+
+#[test]
+#[should_panic(expected = "frame counter must fit in 63 bits")]
+fn seq_num_body_rejects_index_with_end_bit_set() {
+    SequenceNumber::for_body(1u64 << 63);
+}
+
+#[test]
+#[should_panic(expected = "frame counter must fit in 63 bits")]
+fn seq_num_end_rejects_index_with_end_bit_set() {
+    SequenceNumber::for_end(1u64 << 63);
+}
+
+#[test]
+#[should_panic(expected = "frame counter must fit in 63 bits")]
+fn seq_num_rejects_u64_max_index() {
+    SequenceNumber::new(u64::MAX, true);
 }
 
 /// Test the default value of FrameLength.
@@ -577,9 +654,9 @@ fn framebuf_encrypt_lt_capacity() {
     assert_eq!(len, plain_txt.len());
     validate_framebuf(&frame_buf, plain_txt.len(), header.frame_len.as_usize());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
-    validate_frame_bytes(frame_buf.as_ref(), &frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
+    validate_frame_bytes(frame_buf.as_ref(), &seq_num);
 }
 
 #[test]
@@ -594,9 +671,9 @@ fn framebuf_encrypt_eq_capacity() {
     assert_eq!(len, plain_txt.len());
     validate_framebuf(&frame_buf, plain_txt.len(), header.frame_len.as_usize());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
-    validate_frame_bytes(frame_buf.as_ref(), &frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
+    validate_frame_bytes(frame_buf.as_ref(), &seq_num);
 }
 
 #[test]
@@ -613,9 +690,9 @@ fn framebuf_encrypt_gt_capacity() {
     assert_eq!(len, plain_txt_frame_len);
     validate_framebuf(&frame_buf, plain_txt_frame_len, header.frame_len.as_usize());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
-    validate_frame_bytes(frame_buf.as_ref(), &frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
+    validate_frame_bytes(frame_buf.as_ref(), &seq_num);
 }
 
 #[test]
@@ -623,9 +700,9 @@ fn framebuf_encrypt_empty_payload() {
     let parent_key = mock_parent_key();
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
     let mut frame_buf = FrameBuf::new(&header);
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
-    validate_frame_bytes(frame_buf.as_ref(), &frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
+    validate_frame_bytes(frame_buf.as_ref(), &seq_num);
     let payload = frame_buf.payload();
     assert!(payload.is_empty());
 }
@@ -638,7 +715,7 @@ fn framebuf_encrypt_partial_body_panics() {
     let mut frame_buf = FrameBuf::new(&header);
     frame_buf.write_payload(0, &[1, 2, 3]).unwrap();
 
-    frame_buf.encrypt(&FrameHeader::new(0, false));
+    frame_buf.encrypt(&SequenceNumber::new(0, false));
 }
 
 #[test]
@@ -646,10 +723,10 @@ fn framebuf_encrypt_partial_body_panics() {
 fn framebuf_encrypt_panic() {
     let parent_key = mock_parent_key();
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
-    let frame_header = FrameHeader::new(1, true);
+    let seq_num = SequenceNumber::new(1, true);
     let mut frame_buf = FrameBuf::new(&header);
     frame_buf.payload_len = 1 << 31;
-    frame_buf.encrypt(&frame_header);
+    frame_buf.encrypt(&seq_num);
 }
 
 #[test]
@@ -693,9 +770,9 @@ fn framebuf_decrypt_in_place() {
     let len = frame_buf.write_payload(0, &plain_txt).unwrap();
     assert_eq!(len, plain_txt.len());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
-    validate_frame_bytes(frame_buf.as_ref(), &frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
+    validate_frame_bytes(frame_buf.as_ref(), &seq_num);
 
     frame_buf.decrypt(1).unwrap();
     let payload = frame_buf.payload();
@@ -712,9 +789,9 @@ fn framebuf_decrypt_from_copy() {
     let len = frame_buf.write_payload(0, &plain_txt).unwrap();
     assert_eq!(len, plain_txt.len());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
-    validate_frame_bytes(frame_buf.as_ref(), &frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
+    validate_frame_bytes(frame_buf.as_ref(), &seq_num);
 
     let mut frame_buf_2 = FrameBuf::new(&header);
     let len = frame_buf_2.copy_from_encrypted_bytes(frame_buf.as_ref());
@@ -745,8 +822,8 @@ fn framebuf_decrypt_empty_payload() {
     let parent_key = mock_parent_key();
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
     let mut frame_buf = FrameBuf::new(&header);
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
     frame_buf.decrypt(1).unwrap();
     let payload = frame_buf.payload();
     assert!(payload.is_empty());
@@ -771,11 +848,11 @@ fn framebuf_entropy() {
     let plain_txt = vec![0u8; payload_chunk_len];
     let mut payload = Vec::with_capacity(payload_len);
 
-    for seq_num in 0..frame_count - 1 {
+    for frame_idx in 0..frame_count - 1 {
         frame_buf.write_payload(0, &plain_txt).unwrap();
         assert!(!frame_buf.has_payload_capacity());
-        let metadata = FrameHeaderBuilder::new(seq_num.try_into().unwrap()).build();
-        frame_buf.encrypt(&metadata);
+        let seq_num = SequenceNumber::for_body(frame_idx.try_into().unwrap());
+        frame_buf.encrypt(&seq_num);
         payload.extend_from_slice(frame_buf.payload());
         frame_buf.clear();
     }
@@ -806,8 +883,8 @@ fn framebuf_decrypt_end_flag_tamper_err() {
     let len = frame_buf.write_payload(0, &plain_txt).unwrap();
     assert_eq!(len, plain_txt.len());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
 
     frame_buf.buf[SEQ_NUM_OFFSET + SEQ_NUM_LEN - 1] &= 0x7f;
 
@@ -826,12 +903,12 @@ fn framebuf_decrypt_truncate() {
     let mut frame_buf = FrameBuf::new(&header);
 
     // Build END frame with payload_len = 16
-    let header = FrameHeader::new(1, true);
+    let header = SequenceNumber::new(1, true);
     frame_buf.write_payload(0, &[0u8; 16]).unwrap();
     frame_buf.encrypt(&header);
 
     // Truncate: keep only header + tag, drop payload bytes
-    let keep = FRAME_HEADER_LEN + FRAME_TAG_LEN;
+    let keep = SEQ_NUM_LEN + FRAME_TAG_LEN;
     frame_buf.buf.truncate(keep);
 
     if let Err(e) = frame_buf.decrypt(1) {
@@ -848,7 +925,7 @@ fn framebuf_decrypt_partial_body_err() {
     let mut frame_buf = FrameBuf::new(&header);
     let payload = vec![0; frame_buf.max_payload_len];
     frame_buf.write_payload(0, &payload).unwrap();
-    frame_buf.encrypt(&FrameHeader::new(1, false));
+    frame_buf.encrypt(&SequenceNumber::new(1, false));
     frame_buf.buf.truncate(frame_buf.frame_len - 1);
 
     if let Err(err) = frame_buf.decrypt(1) {
@@ -868,8 +945,8 @@ fn framebuf_decrypt_seq_num_err() {
     let len = frame_buf.write_payload(0, &plain_txt).unwrap();
     assert_eq!(len, plain_txt.len());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
 
     if let Err(e) = frame_buf.decrypt(2) {
         assert!(matches!(e.kind(), ErrorKind::UnexpectedSeqNum(2, 1)));
@@ -918,8 +995,8 @@ fn framebuf_integrity_err() {
     let len = frame_buf.write_payload(0, &plain_txt).unwrap();
     assert_eq!(len, plain_txt.len());
 
-    let frame_header = FrameHeader::new(1, true);
-    frame_buf.encrypt(&frame_header);
+    let seq_num = SequenceNumber::new(1, true);
+    frame_buf.encrypt(&seq_num);
 
     // Flip the bits for each byte of the cipher text and confirm
     // that decryption fails.
@@ -947,9 +1024,9 @@ fn stream_write() {
     assert!(stream.is_eof());
 
     let cipher_txt = stream.into_inner();
-    let expected_frame_header = FrameHeaderBuilder::new(0).end().build();
+    let expected_seq_num = SequenceNumber::for_end(0);
 
-    validate_frame_bytes(&cipher_txt, &expected_frame_header);
+    validate_frame_bytes(&cipher_txt, &expected_seq_num);
     assert_ne!(plain_txt, cipher_txt);
 }
 
@@ -962,9 +1039,9 @@ fn stream_max_seq_end() {
         .with_frame_len(frame_len)
         .build();
     let plain_txt = payload_from_frame_count(2, frame_len);
-    let start_seq_num = MAX_FRAME_COUNTER - 1;
+    let start_frame_idx = MAX_FRAME_INDEX - 1;
 
-    let mut writer = StreamCore::new_with_seq_num(Vec::new(), &header, start_seq_num);
+    let mut writer = StreamCore::new_with_frame_idx(Vec::new(), &header, start_frame_idx);
     writer.write_all(&plain_txt).unwrap();
     writer.eof().unwrap();
 
@@ -972,16 +1049,17 @@ fn stream_max_seq_end() {
     let mut frames = cipher_txt.chunks_exact(frame_len.as_usize());
     validate_frame_bytes(
         frames.next().unwrap(),
-        &FrameHeaderBuilder::new(start_seq_num).build(),
+        &SequenceNumber::for_body(start_frame_idx),
     );
     validate_frame_bytes(
         frames.next().unwrap(),
-        &FrameHeaderBuilder::new(MAX_FRAME_COUNTER).end().build(),
+        &SequenceNumber::for_end(MAX_FRAME_INDEX),
     );
     assert!(frames.next().is_none());
     assert!(frames.remainder().is_empty());
 
-    let mut reader = StreamCore::new_with_seq_num(Cursor::new(cipher_txt), &header, start_seq_num);
+    let mut reader =
+        StreamCore::new_with_frame_idx(Cursor::new(cipher_txt), &header, start_frame_idx);
     let mut decoded = Vec::new();
     reader.read_to_end(&mut decoded).unwrap();
     reader.is_eof_or_err().unwrap();
@@ -998,7 +1076,7 @@ fn stream_max_seq_body_err() {
         .build();
     let plain_txt = payload_from_frame_count(1, frame_len);
 
-    let mut stream = StreamCore::new_with_seq_num(Vec::new(), &header, MAX_FRAME_COUNTER);
+    let mut stream = StreamCore::new_with_frame_idx(Vec::new(), &header, MAX_FRAME_INDEX);
     stream.write_all(&plain_txt).unwrap();
     assert!(stream.inner.is_empty());
 
@@ -1010,7 +1088,7 @@ fn stream_max_seq_body_err() {
     stream.eof().unwrap();
     validate_frame_bytes(
         &stream.into_inner(),
-        &FrameHeaderBuilder::new(MAX_FRAME_COUNTER).end().build(),
+        &SequenceNumber::for_end(MAX_FRAME_INDEX),
     );
 }
 
@@ -1266,7 +1344,7 @@ fn stream_seek_multi_frame() {
     let expected_off = payload_len_per_frame as u64;
     let off = stream.seek(SeekFrom::Start(expected_off)).unwrap();
     assert_eq!(off, expected_off);
-    assert_eq!(stream.seq_num, 1);
+    assert_eq!(stream.frame_idx, 1);
     let mut buf = vec![0u8; payload_len_per_frame];
     stream.read_exact(&mut buf).unwrap();
     assert!(buf.iter().all(|&v| v == 0xff));
@@ -1276,7 +1354,7 @@ fn stream_seek_multi_frame() {
     let expected_off = payload_len_per_frame as i64;
     let off = stream.seek(SeekFrom::Current(expected_off)).unwrap();
     assert_eq!(off, expected_off as u64);
-    assert_eq!(stream.seq_num, 1);
+    assert_eq!(stream.frame_idx, 1);
     let mut buf = vec![0u8; payload_len_per_frame];
     stream.read_exact(&mut buf).unwrap();
     assert!(buf.iter().all(|&v| v == 0xff));
@@ -1286,7 +1364,7 @@ fn stream_seek_multi_frame() {
     let expected_off = payload_len_per_frame as i64;
     let off = stream.seek(SeekFrom::End(-expected_off)).unwrap();
     assert_eq!(off, expected_off as u64);
-    assert_eq!(stream.seq_num, 1);
+    assert_eq!(stream.frame_idx, 1);
     let mut buf = vec![0u8; payload_len_per_frame];
     stream.read_exact(&mut buf).unwrap();
     assert!(buf.iter().all(|&v| v == 0xff));
@@ -1567,15 +1645,15 @@ fn reader_builder_sets_initial_seq_num() {
     let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
         .with_frame_len(FrameLength::Len4KiB)
         .build();
-    let start_seq_num = 42;
+    let start_frame_idx = 42;
     let plain_txt = b"checkpoint data";
-    let mut writer = StreamCore::new_with_seq_num(Vec::new(), &header, start_seq_num);
+    let mut writer = StreamCore::new_with_frame_idx(Vec::new(), &header, start_frame_idx);
     writer.write_all(plain_txt).unwrap();
     writer.eof().unwrap();
 
     let mut reader = ZymicReaderBuilder::new(&parent_key)
         .with_header(header.bytes().clone())
-        .with_seq_num(start_seq_num)
+        .with_frame_idx(start_frame_idx)
         .build(Cursor::new(writer.into_inner()))
         .unwrap();
     let mut decoded = Vec::new();

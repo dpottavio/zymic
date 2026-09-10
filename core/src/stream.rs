@@ -8,8 +8,8 @@ pub mod v1;
 pub mod v2;
 
 pub use v2::{
-    CryptoAlgorithm, FrameBuf, FrameHeader, FrameHeaderBuilder, FrameLength, Header, HeaderBuilder,
-    HeaderBytes, HeaderNonce,
+    CryptoAlgorithm, FrameBuf, FrameLength, Header, HeaderBuilder, HeaderBytes, HeaderNonce,
+    SequenceNumber,
 };
 
 #[cfg(feature = "std")]

@@ -211,23 +211,23 @@ determined by the Algorithm field in the Stream Header. For Algorithm
 
 ### Sequence Number
 
-The Sequence Number is a 64-bit value containing a 63-bit Frame Counter
+The Sequence Number is a 64-bit value containing a 63-bit Frame Index
 and a one-bit End Frame flag. The most significant bit is the End Frame
-flag, and the remaining bits encode the Frame Counter:
+flag, and the remaining bits encode the Frame Index:
 
 |  Bit Offset   |       Field     |  Width (bits) |
 |---------------|-----------------|---------------|
-|      0        | Frame Counter   |      63       |
+|      0        | Frame Index     |      63       |
 |     63        | End Frame Flag  |       1       |
 
 The End Frame flag MUST be clear for a Body Frame and set for the End
-Frame. The Frame Counter MUST begin at `0` and increase by exactly `1`
+Frame. The Frame Index MUST begin at `0` and increase by exactly `1`
 for every subsequent Frame. The decoder MUST verify that the observed
-Frame Counter equals the expected counter; any reordering,
+Frame Index equals the expected counter; any reordering,
 duplication, or omission invalidates the Stream.
 
-The Frame Counter MUST NOT wrap under the same Data Key. If another
-Frame would require a Frame Counter of `2^63`, the encoder MUST fail
+The Frame Index MUST NOT wrap under the same Data Key. If another
+Frame would require a Frame Index of `2^63`, the encoder MUST fail
 and MUST NOT emit any additional Frames under that Data Key.
 
 #### AES-GCM IV Construction
@@ -244,7 +244,7 @@ This uses the deterministic construction in [NIST SP
 800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf)
 section 8.2.1, with a 32-bit fixed field and a 64-bit invocation
 field. As per section 8.3, Zymic is permitted at most 2^63 Frames per
-Data Key, including the End Frame. This is because the Frame Counter
+Data Key, including the End Frame. This is because the Frame Index
 is 63-bits and MUST NOT wrap.
 
 ### Payload
@@ -289,7 +289,7 @@ Each Stream is encrypted and decrypted using a unique, one-time-use
 Data Key. These Data Keys are derived from a long-term Parent Key
 using a Key Derivation Function (KDF).
 
-The Frame Counter imposes the following structural format limits:
+The Frame Index imposes the following structural format limits:
 
 * A Stream can contain at most `2^63` total Frames, including the End
   Frame.
@@ -522,9 +522,9 @@ Payload Length. If the Plaintext is empty, create one empty final chunk.
 
 3. Encode each Plaintext chunk into a Frame. For each chunk:
 
-    1. Assign the Frame Counter.
+    1. Assign the Frame Index.
 
-        1. The first Frame MUST use `0`. Increment the Frame Counter by
+        1. The first Frame MUST use `0`. Increment the Frame Index by
            exactly `1` for each subsequent Frame.
 
         2. The value MUST be between `0` and `2^63 - 1`. The encoder MUST
@@ -533,11 +533,11 @@ Payload Length. If the Plaintext is empty, create one empty final chunk.
     2. Encode the Sequence Number.
 
         1. If this is the final chunk, encode it as the End Frame by
-           encoding the Frame Counter in the low 63 bits of the Sequence
+           encoding the Frame Index in the low 63 bits of the Sequence
            Number and setting the Sequence Number's most significant bit.
 
         2. Otherwise, encode it as a Body Frame by encoding the Frame
-           Counter in the low 63 bits of the Sequence Number and leaving
+           Index in the low 63 bits of the Sequence Number and leaving
            the Sequence Number's most significant bit clear.
 
     3. Encrypt the payload.
@@ -579,11 +579,11 @@ Steps:
 
     1. Parse and validate the Sequence Number.
 
-        * Extract the End Frame flag and Frame Counter from the serialized
+        * Extract the End Frame flag and Frame Index from the serialized
           Sequence Number.
 
-        * Require the observed Frame Counter to equal the expected Frame
-          Counter, beginning with `0`. Reject a missing, duplicated, or
+        * Require the observed Frame Index to equal the expected Frame
+          Index, beginning with `0`. Reject a missing, duplicated, or
           reordered Frame.
 
         * The Sequence Number, derived Frame type, Payload boundary, and
@@ -628,7 +628,7 @@ Steps:
            without releasing that Frame's plaintext.
 
         4. After a Body Frame is authenticated, increment the expected
-           Frame Counter by exactly `1`. Reject the Stream if incrementing
+           Frame Index by exactly `1`. Reject the Stream if incrementing
            would exceed `2^63 - 1`. Stop processing Frames after
            authenticating the End Frame.
 
