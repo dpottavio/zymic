@@ -247,22 +247,6 @@ pub struct Header {
     bytes: HeaderBytes,
 }
 
-/// Builder for the [`Header`] type.
-///
-#[cfg_attr(
-    feature = "std",
-    doc = "With the `std` feature, prefer [`ZymicWriter::new`], which consumes the
-nonce while constructing a writer.
-"
-)]
-/// Reusing the same parent key and nonce to encrypt
-/// different frame sequences compromises confidentiality.
-pub struct HeaderBuilder<'a> {
-    parent_key: &'a ParentKey,
-    nonce: &'a HeaderNonce,
-    frame_len: FrameLength,
-}
-
 /// The 64-bit Sequence Number value comprised of a Frame Index field,
 /// and the End Frame flag. Each serialized Frame begins with the
 /// encoded value of this type.
@@ -341,7 +325,7 @@ pub struct SequenceNumber {
 /// # fn main() -> Result<(), zymic_core::Error> {
 /// use zymic_core::{
 ///     key::ParentKey,
-///     stream::{FrameBuf, SequenceNumber, HeaderBuilder, HeaderNonce},
+///     stream::{FrameBuf, SequenceNumber, Header, HeaderNonce},
 /// };
 /// #
 /// # {
@@ -350,7 +334,7 @@ pub struct SequenceNumber {
 /// // Build header/keying material per your application.
 /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
 /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
-/// let header = HeaderBuilder::new(&parent_key, &nonce).build();
+/// let header = Header::new(&parent_key, nonce);
 ///
 /// // Prepare a frame and encrypt the payload.
 /// let mut fb = FrameBuf::new(&header);
@@ -987,6 +971,60 @@ impl core::ops::Deref for FrameBuf {
 }
 
 impl Header {
+    /// Create a stream header with the default frame length.
+    ///
+    #[cfg_attr(
+        feature = "std",
+        doc = "For streaming encryption, prefer [`ZymicWriter::new`]."
+    )]
+    ///
+    /// # Security
+    ///
+    /// The nonce must be unique for every stream encrypted under the same
+    /// parent key. Generate it using a cryptographically secure random source.
+    /// Reusing the same parent key and nonce to encrypt different frame
+    /// sequences compromises confidentiality.
+    pub fn new(parent_key: &ParentKey, nonce: HeaderNonce) -> Self {
+        Self::new_with_frame_len(parent_key, nonce, FrameLength::default())
+    }
+
+    /// Create a stream header with the given frame length.
+    ///
+    /// # Security
+    ///
+    /// The nonce must be unique for every stream encrypted under the same
+    /// parent key. Generate it using a cryptographically secure random source.
+    /// Reusing the same parent key and nonce to encrypt different frame
+    /// sequences compromises confidentiality.
+    pub fn new_with_frame_len(
+        parent_key: &ParentKey,
+        nonce: HeaderNonce,
+        frame_len: FrameLength,
+    ) -> Self {
+        // Encode the binary header fields for the stream header.
+        let bytes = HeaderBytes::default();
+        let mut cur = ByteCursorMut::new(bytes);
+        cur.push_u32_le(MAGIC_NUM);
+        cur.push_u8(VERSION);
+        cur.push_u16_le(CryptoAlgorithm::Aes256GcmHkdfSha256 as u16);
+        cur.push_u8(frame_len.into());
+        cur.push_bytes(&[0u8; RESERVED_LEN]);
+        cur.push_bytes(&nonce);
+        cur.push_bytes(parent_key.id());
+        let mut bytes = cur.into_inner();
+
+        let info = &bytes[HKDF_INFO_RANGE];
+
+        let (header_mac, data_key) = derive_data_key(parent_key, info);
+        bytes.as_mut()[HEADER_MAC_OFFSET..].copy_from_slice(&header_mac);
+
+        Self {
+            frame_len,
+            data_key,
+            bytes,
+        }
+    }
+
     /// Parse and validate a [`Header`] from its serialized byte form.
     ///
     /// This function decodes the raw [`HeaderBytes`] produced by
@@ -1093,52 +1131,6 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
 impl Drop for Header {
     fn drop(&mut self) {
         self.data_key.zeroize();
-    }
-}
-
-impl<'a> HeaderBuilder<'a> {
-    /// Create a new instance. The nonce MUST be unique for every
-    /// stream encrypted under the same parent key. Prefer generating
-    /// it using a CSPRNG.
-    pub fn new(parent_key: &'a ParentKey, nonce: &'a HeaderNonce) -> Self {
-        Self {
-            parent_key,
-            nonce,
-            frame_len: Default::default(),
-        }
-    }
-
-    /// Set the frame length for the stream header.
-    pub fn with_frame_len(mut self, len: FrameLength) -> Self {
-        self.frame_len = len;
-        self
-    }
-
-    /// Return a new [`Header`] instance from the configuration of
-    /// this instance.
-    pub fn build(self) -> Header {
-        // Encode the binary header fields for the stream header.
-        let bytes = HeaderBytes::default();
-        let mut cur = ByteCursorMut::new(bytes);
-        cur.push_u32_le(MAGIC_NUM);
-        cur.push_u8(VERSION);
-        cur.push_u16_le(CryptoAlgorithm::Aes256GcmHkdfSha256 as u16);
-        cur.push_u8(self.frame_len.into());
-        cur.push_bytes(&[0u8; RESERVED_LEN]);
-        cur.push_bytes(self.nonce);
-        cur.push_bytes(self.parent_key.id());
-        let mut bytes = cur.into_inner();
-
-        let info = &bytes[HKDF_INFO_RANGE];
-
-        let (header_mac, data_key) = derive_data_key(self.parent_key, info);
-        bytes.as_mut()[HEADER_MAC_OFFSET..].copy_from_slice(&header_mac);
-
-        Header {
-            frame_len: self.frame_len,
-            data_key,
-            bytes,
-        }
     }
 }
 
@@ -1639,9 +1631,7 @@ impl<T: Write> ZymicWriter<T> {
         nonce: HeaderNonce,
         frame_len: FrameLength,
     ) -> Result<Self, Error> {
-        let header = HeaderBuilder::new(parent_key, &nonce)
-            .with_frame_len(frame_len)
-            .build();
+        let header = Header::new_with_frame_len(parent_key, nonce, frame_len);
         inner.write_all(header.bytes())?;
         let core = StreamCore::new(inner, &header);
         Ok(Self {

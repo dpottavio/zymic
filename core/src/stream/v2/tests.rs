@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 use super::{
-    frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameLength, Header, HeaderBuilder,
-    HeaderNonce, SequenceNumber, ALGO_OFFSET, END_FRAME_MASK, FRAME_LEN_LEN, FRAME_LEN_OFFSET,
-    FRAME_META_LEN, FRAME_TAG_LEN, HEADER_MAC_OFFSET, KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET,
-    PAYLOAD_OFFSET, RESERVED_LEN, RESERVED_OFFSET, SEQ_NUM_LEN, SEQ_NUM_OFFSET, VERSION,
-    VERSION_OFFSET,
+    frame_nonce, Aes256Gcm, CryptoAlgorithm, FrameBuf, FrameLength, Header, HeaderNonce,
+    SequenceNumber, ALGO_OFFSET, END_FRAME_MASK, FRAME_LEN_LEN, FRAME_LEN_OFFSET, FRAME_META_LEN,
+    FRAME_TAG_LEN, HEADER_MAC_OFFSET, KEY_ID_OFFSET, MAGIC_NUM, NONCE_OFFSET, PAYLOAD_OFFSET,
+    RESERVED_LEN, RESERVED_OFFSET, SEQ_NUM_LEN, SEQ_NUM_OFFSET, VERSION, VERSION_OFFSET,
 };
 use crate::{
     byte_array,
@@ -188,9 +187,7 @@ fn stream_io_copy(alignment: usize) {
     while plain_txt_len < max_plain_txt_len {
         let expected_plain_txt = vec![0xffu8; plain_txt_len];
         let mut plain_txt_reader = Cursor::new(expected_plain_txt);
-        let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-            .with_frame_len(frame_len)
-            .build();
+        let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
 
         let mut zym_writer = StreamCore::new(Vec::default(), &header);
         std::io::copy(&mut plain_txt_reader, &mut zym_writer).unwrap();
@@ -214,7 +211,7 @@ fn stream_io_copy(alignment: usize) {
 #[test]
 fn header_format() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let bytes = header.bytes();
     validate_header(
         bytes,
@@ -228,7 +225,7 @@ fn header_format() {
 #[test]
 fn header_kdf_outputs() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
 
     let expected_header_mac = [
         0xcf, 0x20, 0x0a, 0x0f, 0x47, 0x61, 0x6b, 0x9d, 0xec, 0x83, 0x32, 0xf1, 0x92, 0x0e, 0x99,
@@ -250,9 +247,7 @@ fn header_kdf_outputs() {
 fn header_getters() {
     let frame_len = FrameLength::Len32KiB;
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
 
     assert_eq!(header.version(), VERSION);
     assert_eq!(header.algorithm(), CryptoAlgorithm::Aes256GcmHkdfSha256);
@@ -369,7 +364,7 @@ fn seq_num_rejects_u64_max_index() {
 #[test]
 fn header_default_frame_len() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     assert_eq!(FrameLength::default(), header.frame_len);
 
     let empty_data_key = aes_gcm::Key::<Aes256Gcm>::default();
@@ -381,9 +376,7 @@ fn header_default_frame_len() {
 fn header_explicit_frame_len() {
     let frame_len = FrameLength::Len32KiB;
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     assert_eq!(frame_len, header.frame_len);
 
     let empty_data_key = aes_gcm::Key::<Aes256Gcm>::default();
@@ -394,9 +387,8 @@ fn header_explicit_frame_len() {
 #[test]
 fn header_max_frame_len() {
     let parent_key = mock_parent_key();
-    let expected_header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(FrameLength::Len64KiB)
-        .build();
+    let expected_header =
+        Header::new_with_frame_len(&parent_key, TEST_NONCE, FrameLength::Len64KiB);
     let header = Header::from_bytes(&parent_key, expected_header.bytes().clone()).unwrap();
     assert!(
         expected_header == header,
@@ -408,7 +400,7 @@ fn header_max_frame_len() {
 #[test]
 fn header_from_bytes() {
     let parent_key = mock_parent_key();
-    let expected_header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let expected_header = Header::new(&parent_key, TEST_NONCE);
     let bytes = expected_header.bytes();
     let header = Header::from_bytes(&parent_key, bytes.clone()).unwrap();
     assert!(
@@ -421,7 +413,7 @@ fn header_from_bytes() {
 #[test]
 fn header_from_bytes_err() {
     let parent_key = mock_parent_key();
-    let expected_header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let expected_header = Header::new(&parent_key, TEST_NONCE);
     let bytes = expected_header.bytes();
     let bad_parent_key = ParentKey::new(parent_key.id().clone(), ParentKeySecret::default());
 
@@ -437,7 +429,7 @@ fn header_from_bytes_err() {
 #[test]
 fn header_key_id_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let wrong_key = ParentKey::default();
 
     if let Err(e) = Header::from_bytes(&wrong_key, header.bytes().clone()) {
@@ -452,7 +444,7 @@ fn header_key_id_err() {
 #[test]
 fn header_magic_num_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut header_bytes = header.bytes().clone();
     header_bytes[0] = 0;
 
@@ -468,7 +460,7 @@ fn header_magic_num_err() {
 #[test]
 fn header_version_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut header_bytes = header.bytes().clone();
     header_bytes[VERSION_OFFSET] = 1;
 
@@ -484,7 +476,7 @@ fn header_version_err() {
 #[test]
 fn header_algo_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut header_bytes = header.bytes().clone();
     header_bytes[ALGO_OFFSET] = 0xff;
     header_bytes[ALGO_OFFSET + 1] = 0xff;
@@ -500,7 +492,7 @@ fn header_algo_err() {
 #[test]
 fn header_frame_len_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut header_bytes = header.bytes().clone();
     for i in FRAME_LEN_OFFSET..FRAME_LEN_OFFSET + FRAME_LEN_LEN {
         header_bytes[i] = 0xff;
@@ -517,7 +509,7 @@ fn header_frame_len_err() {
 #[test]
 fn header_nonce_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut header_bytes = header.bytes().clone();
 
     for i in NONCE_OFFSET..NONCE_OFFSET + HeaderNonce::LEN {
@@ -535,7 +527,7 @@ fn header_nonce_err() {
 #[test]
 fn framebuf_new() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
 
     let frame_buf = FrameBuf::new(&header);
     validate_framebuf(&frame_buf, 0, header.frame_len.as_usize());
@@ -545,7 +537,7 @@ fn framebuf_new() {
 #[test]
 fn framebuf_write_payload() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -559,7 +551,7 @@ fn framebuf_write_payload() {
 #[test]
 fn framebuf_write_payload_inline() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt_1 = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -582,7 +574,7 @@ fn framebuf_write_payload_inline() {
 #[test]
 fn framebuf_write_payload_extend() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt_1 = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -604,7 +596,7 @@ fn framebuf_write_payload_extend() {
 #[test]
 fn framebuf_write_payload_append() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt_1 = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -631,7 +623,7 @@ fn framebuf_write_payload_append() {
 #[should_panic]
 fn framebuf_write_payload_panic() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -646,7 +638,7 @@ fn framebuf_write_payload_panic() {
 #[test]
 fn framebuf_encrypt_lt_capacity() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -662,7 +654,7 @@ fn framebuf_encrypt_lt_capacity() {
 #[test]
 fn framebuf_encrypt_eq_capacity() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt_len = header.frame_len.as_usize() - FRAME_META_LEN;
     let plain_txt = vec![0u8; plain_txt_len];
 
@@ -679,7 +671,7 @@ fn framebuf_encrypt_eq_capacity() {
 #[test]
 fn framebuf_encrypt_gt_capacity() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt_frame_len = header.frame_len.as_usize() - FRAME_META_LEN;
     // Create a plain text buffer larger than what a single frame
     // can contain.
@@ -698,7 +690,7 @@ fn framebuf_encrypt_gt_capacity() {
 #[test]
 fn framebuf_encrypt_empty_payload() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
     let seq_num = SequenceNumber::new(1, true);
     frame_buf.encrypt(&seq_num);
@@ -711,7 +703,7 @@ fn framebuf_encrypt_empty_payload() {
 #[should_panic(expected = "Body Frame payload must fill the configured Frame Length")]
 fn framebuf_encrypt_partial_body_panics() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
     frame_buf.write_payload(0, &[1, 2, 3]).unwrap();
 
@@ -722,7 +714,7 @@ fn framebuf_encrypt_partial_body_panics() {
 #[should_panic]
 fn framebuf_encrypt_panic() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let seq_num = SequenceNumber::new(1, true);
     let mut frame_buf = FrameBuf::new(&header);
     frame_buf.payload_len = 1 << 31;
@@ -732,7 +724,7 @@ fn framebuf_encrypt_panic() {
 #[test]
 fn framebuf_clear() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -744,7 +736,7 @@ fn framebuf_clear() {
 #[test]
 fn framebuf_clear_resize_to_full() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
 
     let mut frame_buf = FrameBuf::new(&header);
     frame_buf.clear_resize_to_full();
@@ -763,7 +755,7 @@ fn framebuf_clear_resize_to_full() {
 #[test]
 fn framebuf_decrypt_in_place() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -782,7 +774,7 @@ fn framebuf_decrypt_in_place() {
 #[test]
 fn framebuf_decrypt_from_copy() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -805,7 +797,7 @@ fn framebuf_decrypt_from_copy() {
 #[test]
 fn framebuf_copy_from_encrypted_bytes() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let data = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -820,7 +812,7 @@ fn framebuf_copy_from_encrypted_bytes() {
 #[test]
 fn framebuf_decrypt_empty_payload() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
     let seq_num = SequenceNumber::new(1, true);
     frame_buf.encrypt(&seq_num);
@@ -832,7 +824,7 @@ fn framebuf_decrypt_empty_payload() {
 #[test]
 fn framebuf_entropy() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
 
     // Total payload data collected in bytes. This needs to be
@@ -863,7 +855,7 @@ fn framebuf_entropy() {
 #[test]
 fn framebuf_decrypt_empty_buf_panic() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
 
     if let Err(e) = frame_buf.decrypt(0) {
@@ -876,7 +868,7 @@ fn framebuf_decrypt_empty_buf_panic() {
 #[test]
 fn framebuf_decrypt_end_flag_tamper_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![0; header.frame_len.as_usize() - FRAME_META_LEN];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -899,7 +891,7 @@ fn framebuf_decrypt_end_flag_tamper_err() {
 #[test]
 fn framebuf_decrypt_truncate() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
 
     // Build END frame with payload_len = 16
@@ -921,7 +913,7 @@ fn framebuf_decrypt_truncate() {
 #[test]
 fn framebuf_decrypt_partial_body_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let mut frame_buf = FrameBuf::new(&header);
     let payload = vec![0; frame_buf.max_payload_len];
     frame_buf.write_payload(0, &payload).unwrap();
@@ -938,7 +930,7 @@ fn framebuf_decrypt_partial_body_err() {
 #[test]
 fn framebuf_decrypt_seq_num_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -958,7 +950,7 @@ fn framebuf_decrypt_seq_num_err() {
 #[test]
 fn framebuf_chunk_mut_commit() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let frame_data = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -974,7 +966,7 @@ fn framebuf_chunk_mut_commit() {
 #[test]
 fn framebuf_chunk_mut_commit_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
 
     let mut frame_buf = FrameBuf::new(&header);
 
@@ -988,7 +980,7 @@ fn framebuf_chunk_mut_commit_err() {
 #[test]
 fn framebuf_integrity_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
 
     let mut frame_buf = FrameBuf::new(&header);
@@ -1014,7 +1006,7 @@ fn framebuf_integrity_err() {
 #[test]
 fn stream_write() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cipher_txt: Vec<u8> = Vec::default();
 
@@ -1035,9 +1027,7 @@ fn stream_write() {
 fn stream_max_seq_end() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(2, frame_len);
     let start_frame_idx = MAX_FRAME_INDEX - 1;
 
@@ -1071,9 +1061,7 @@ fn stream_max_seq_end() {
 fn stream_max_seq_body_err() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(1, frame_len);
 
     let mut stream = StreamCore::new_with_frame_idx(Vec::new(), &header, MAX_FRAME_INDEX);
@@ -1096,7 +1084,7 @@ fn stream_max_seq_body_err() {
 #[test]
 fn stream_write_read_eof() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
@@ -1134,7 +1122,7 @@ fn stream_write_after_eof_err() {
 #[test]
 fn stream_seek_read() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
@@ -1153,7 +1141,7 @@ fn stream_seek_read() {
 #[test]
 fn stream_frame_payload_offset_large_offsets() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let stream = StreamCore::new(Cursor::new(Vec::<u8>::new()), &header);
     let payload_off = u32::MAX as u64 + 123;
     let expected = (payload_off % stream.frame_buf.max_payload_len as u64) as usize;
@@ -1171,9 +1159,7 @@ fn stream_frame_payload_offset_large_offsets() {
 fn stream_read_eof() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(4, frame_len);
 
     let mut stream = StreamCore::new(Vec::default(), &header);
@@ -1193,9 +1179,7 @@ fn stream_read_eof() {
 fn stream_leaves_bytes_after_full_end_frame_unread() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(1, frame_len);
 
     let mut writer = StreamCore::new(Vec::new(), &header);
@@ -1217,7 +1201,7 @@ fn stream_leaves_bytes_after_full_end_frame_unread() {
 #[test]
 fn stream_seek_end() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
@@ -1239,9 +1223,7 @@ fn stream_seek_end() {
 fn stream_seek_full_end_frame() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(4, frame_len);
     let cursor = Cursor::new(Vec::default());
 
@@ -1260,7 +1242,7 @@ fn stream_seek_full_end_frame() {
 #[test]
 fn stream_seek_end_one_byte() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = [0x5a];
 
     let mut stream = StreamCore::new(Cursor::new(Vec::default()), &header);
@@ -1281,7 +1263,7 @@ fn stream_seek_end_one_byte() {
 #[test]
 fn stream_seek_current() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
@@ -1303,7 +1285,7 @@ fn stream_seek_current() {
 #[test]
 fn stream_seek_empty_payload() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let cursor = Cursor::new(Vec::default());
 
     let mut stream = StreamCore::new(cursor, &header);
@@ -1327,9 +1309,7 @@ fn stream_seek_multi_frame() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
     let payload_len_per_frame = frame_len.as_usize() - FRAME_META_LEN;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let mut plain_txt = payload_from_frame_count(2, frame_len);
     plain_txt[payload_len_per_frame..].fill(0xff);
 
@@ -1374,9 +1354,7 @@ fn stream_seek_read_across_frame_boundary() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
     let payload_len_per_frame = frame_len.as_usize() - FRAME_META_LEN;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let mut plain_txt = payload_from_frame_count(2, frame_len);
     plain_txt[..payload_len_per_frame].fill(0x11);
     plain_txt[payload_len_per_frame..].fill(0x22);
@@ -1400,9 +1378,7 @@ fn stream_seek_read_across_frame_boundary() {
 fn stream_position_after_partial_body_frame_read() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(2, frame_len);
 
     let mut writer = StreamCore::new(Vec::default(), &header);
@@ -1420,7 +1396,7 @@ fn stream_position_after_partial_body_frame_read() {
 #[test]
 fn stream_seek_unexpected_eof_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
@@ -1454,7 +1430,7 @@ fn stream_seek_unexpected_eof_err() {
 #[test]
 fn stream_seek_invalid_err() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE).build();
+    let header = Header::new(&parent_key, TEST_NONCE);
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
@@ -1480,9 +1456,7 @@ fn stream_seek_invalid_err() {
 fn stream_seq_num_err() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(4, frame_len);
 
     let mut stream = StreamCore::new(Vec::default(), &header);
@@ -1508,9 +1482,7 @@ fn stream_seq_num_err() {
 fn stream_seq_num_err_2() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(4, frame_len);
 
     let mut stream = StreamCore::new(Vec::default(), &header);
@@ -1536,9 +1508,7 @@ fn stream_seq_num_err_2() {
 fn stream_truncated_err() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
     let plain_txt = payload_from_frame_count(4, frame_len);
 
     let mut stream = StreamCore::new(Vec::default(), &header);
@@ -1634,9 +1604,7 @@ fn detached_header_round_trip() {
 #[test]
 fn reader_builder_sets_initial_seq_num() {
     let parent_key = mock_parent_key();
-    let header = HeaderBuilder::new(&parent_key, &TEST_NONCE)
-        .with_frame_len(FrameLength::Len4KiB)
-        .build();
+    let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, FrameLength::Len4KiB);
     let start_frame_idx = 42;
     let plain_txt = b"checkpoint data";
     let mut writer = StreamCore::new_with_frame_idx(Vec::new(), &header, start_frame_idx);
