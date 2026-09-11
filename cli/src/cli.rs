@@ -19,7 +19,7 @@ use zymic_core::{
     key::{ParentKey, ParentKeyId, ParentKeySecret},
     stream::{
         CryptoAlgorithm, FrameLength, Header, HeaderBytes, HeaderNonce, ZymicReaderBuilder,
-        ZymicWriterBuilder,
+        ZymicWriter,
     },
 };
 
@@ -600,9 +600,12 @@ pub fn handle_input() -> Result<(), Error> {
             let io_args = enc_args_to_io(args.file, args.output, args.force)?;
             let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
 
-            let mut writer = ZymicWriterBuilder::new(&parent_key, nonce)
-                .with_frame_len(FrameLength::Len64KiB)
-                .build(io_args.output)?;
+            let mut writer = ZymicWriter::new_with_frame_len(
+                io_args.output,
+                &parent_key,
+                nonce,
+                FrameLength::Len64KiB,
+            )?;
             let mut buf_reader = io::BufReader::new(io_args.input);
             io::copy(&mut buf_reader, &mut writer)?;
             writer.finish()?;

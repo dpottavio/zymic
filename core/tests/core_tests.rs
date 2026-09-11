@@ -7,7 +7,7 @@ mod core_integ_tests {
     use zymic_core::{
         byte_array,
         key::{ParentKey, ParentKeyId, ParentKeySecret},
-        stream::{FrameLength, HeaderNonce, ZymicReaderBuilder, ZymicWriterBuilder},
+        stream::{FrameLength, HeaderNonce, ZymicReaderBuilder, ZymicWriter},
     };
 
     use std::io::{Cursor, Read};
@@ -40,10 +40,13 @@ mod core_integ_tests {
             for size in sizes {
                 let mut plain_txt = Cursor::new(vec![0x0u8; *size]);
                 let cipher_txt = Vec::default();
-                let mut writer = ZymicWriterBuilder::new(&mock_key, MOCK_NONCE)
-                    .with_frame_len(frame_len)
-                    .build(Cursor::new(cipher_txt))
-                    .unwrap();
+                let mut writer = ZymicWriter::new_with_frame_len(
+                    Cursor::new(cipher_txt),
+                    &mock_key,
+                    MOCK_NONCE,
+                    frame_len,
+                )
+                .unwrap();
                 std::io::copy(&mut plain_txt, &mut writer).unwrap();
                 writer.finish().unwrap();
 

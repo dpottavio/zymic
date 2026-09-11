@@ -16,7 +16,7 @@ use crate::{
 use alloc::{format, vec, vec::Vec};
 
 #[cfg(feature = "std")]
-use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriterBuilder, MAX_FRAME_INDEX};
+use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriter, MAX_FRAME_INDEX};
 
 #[cfg(feature = "std")]
 use crate::error::Error;
@@ -1118,9 +1118,7 @@ fn stream_write_after_eof_err() {
     let plain_txt = vec![1, 2, 3, 4, 5];
     let cursor = Cursor::new(Vec::default());
 
-    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
-        .build(cursor)
-        .unwrap();
+    let mut writer = ZymicWriter::new(cursor, &parent_key, TEST_NONCE).unwrap();
     writer.write_all(&plain_txt).unwrap();
     writer.finish().unwrap();
 
@@ -1575,12 +1573,8 @@ fn stream_io_copy_unaligned() {
 fn writer_uses_provided_nonce() {
     let parent_key = mock_parent_key();
     let second_nonce = byte_array![4u8; {HeaderNonce::LEN}];
-    let first = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
-        .build(Vec::<u8>::new())
-        .unwrap();
-    let second = ZymicWriterBuilder::new(&parent_key, second_nonce)
-        .build(Vec::<u8>::new())
-        .unwrap();
+    let first = ZymicWriter::new(Vec::<u8>::new(), &parent_key, TEST_NONCE).unwrap();
+    let second = ZymicWriter::new(Vec::<u8>::new(), &parent_key, second_nonce).unwrap();
 
     assert!(first.header_bytes() != second.header_bytes());
 }
@@ -1590,10 +1584,9 @@ fn writer_uses_provided_nonce() {
 fn inline_header_and_backup_round_trip() {
     let parent_key = mock_parent_key();
     let plain_txt = b"inline header backup";
-    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
-        .with_frame_len(FrameLength::Len4KiB)
-        .build(Vec::new())
-        .unwrap();
+    let mut writer =
+        ZymicWriter::new_with_frame_len(Vec::new(), &parent_key, TEST_NONCE, FrameLength::Len4KiB)
+            .unwrap();
     let primary_header = writer.header_bytes().clone();
     let backup_header = writer.header_bytes().clone();
 
@@ -1617,10 +1610,9 @@ fn inline_header_and_backup_round_trip() {
 fn detached_header_round_trip() {
     let parent_key = mock_parent_key();
     let plain_txt = b"detached header";
-    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
-        .with_frame_len(FrameLength::Len4KiB)
-        .build(Vec::new())
-        .unwrap();
+    let mut writer =
+        ZymicWriter::new_with_frame_len(Vec::new(), &parent_key, TEST_NONCE, FrameLength::Len4KiB)
+            .unwrap();
     let header_bytes = writer.header_bytes().clone();
 
     writer.write_all(plain_txt).unwrap();
@@ -1668,10 +1660,8 @@ fn inline_header_reader_seek_uses_frame_origin() {
     let parent_key = mock_parent_key();
     let frame_len = FrameLength::Len4KiB;
     let plain_txt = payload_from_frame_count(3, frame_len);
-    let mut writer = ZymicWriterBuilder::new(&parent_key, TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build(Vec::new())
-        .unwrap();
+    let mut writer =
+        ZymicWriter::new_with_frame_len(Vec::new(), &parent_key, TEST_NONCE, frame_len).unwrap();
     writer.write_all(&plain_txt).unwrap();
     writer.finish().unwrap();
 
@@ -1691,7 +1681,7 @@ fn inline_header_reader_seek_uses_frame_origin() {
 
 #[cfg(feature = "std")]
 #[test]
-fn writer_builder_propagates_header_write_failure() {
+fn writer_propagates_header_write_failure() {
     struct FailingWriter;
 
     impl Write for FailingWriter {
@@ -1704,9 +1694,12 @@ fn writer_builder_propagates_header_write_failure() {
         }
     }
 
-    let result = ZymicWriterBuilder::new(&mock_parent_key(), TEST_NONCE)
-        .with_frame_len(FrameLength::Len4KiB)
-        .build(FailingWriter);
+    let result = ZymicWriter::new_with_frame_len(
+        FailingWriter,
+        &mock_parent_key(),
+        TEST_NONCE,
+        FrameLength::Len4KiB,
+    );
 
     assert!(result.is_err());
 }
@@ -1734,12 +1727,15 @@ fn writer_failure_disables_further_writes() {
     }
 
     let frame_len = FrameLength::Len4KiB;
-    let mut writer = ZymicWriterBuilder::new(&mock_parent_key(), TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build(FailAfterHeader {
+    let mut writer = ZymicWriter::new_with_frame_len(
+        FailAfterHeader {
             header_written: false,
-        })
-        .unwrap();
+        },
+        &mock_parent_key(),
+        TEST_NONCE,
+        frame_len,
+    )
+    .unwrap();
 
     assert!(writer.write_all(&vec![0; frame_len.as_usize()]).is_err());
     let error = writer.write(&[1]).unwrap_err();
@@ -1770,12 +1766,15 @@ fn writer_panic_disables_further_writes() {
     }
 
     let frame_len = FrameLength::Len4KiB;
-    let mut writer = ZymicWriterBuilder::new(&mock_parent_key(), TEST_NONCE)
-        .with_frame_len(frame_len)
-        .build(PanicAfterHeader {
+    let mut writer = ZymicWriter::new_with_frame_len(
+        PanicAfterHeader {
             header_written: false,
-        })
-        .unwrap();
+        },
+        &mock_parent_key(),
+        TEST_NONCE,
+        frame_len,
+    )
+    .unwrap();
 
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         writer.write_all(&vec![0; frame_len.as_usize()]).unwrap();

@@ -251,7 +251,7 @@ pub struct Header {
 ///
 #[cfg_attr(
     feature = "std",
-    doc = "With the `std` feature, prefer [`ZymicWriterBuilder`], which owns the
+    doc = "With the `std` feature, prefer [`ZymicWriter::new`], which consumes the
 nonce while constructing a writer.
 "
 )]
@@ -421,12 +421,12 @@ pub struct FrameBuf {
 /// use std::io::{copy, Cursor};
 /// use zymic_core::{key::ParentKey, stream::ZymicReaderBuilder};
 /// # use std::io::Write;
-/// # use zymic_core::{stream::{HeaderNonce, ZymicWriterBuilder}};
+/// # use zymic_core::{stream::{HeaderNonce, ZymicWriter}};
 /// #
 /// # {
 /// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
 /// # let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
-/// # let mut writer = ZymicWriterBuilder::new(&parent_key, nonce).build(Vec::new())?;
+/// # let mut writer = ZymicWriter::new(Vec::new(), &parent_key, nonce)?;
 /// # writer.write_all(b"example")?;
 /// # writer.finish()?;
 /// # let encoded = Cursor::new(writer.into_inner());
@@ -459,19 +459,6 @@ pub struct ZymicReaderBuilder<'a> {
     frame_idx: u64,
 }
 
-/// Configures and constructs a [`ZymicWriter`].
-///
-/// The builder owns the stream nonce and configuration and holds a reference to
-/// the parent key. It is consumed when the writer is built so that each build
-/// produces exactly one header and writer.
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-pub struct ZymicWriterBuilder<'a> {
-    parent_key: &'a ParentKey,
-    nonce: HeaderNonce,
-    frame_len: FrameLength,
-}
-
 /// Encrypts plaintext into a new Zymic stream.
 ///
 /// Each writer generates and owns a header constructed from the
@@ -486,13 +473,13 @@ pub struct ZymicWriterBuilder<'a> {
 /// use std::io::copy;
 /// use zymic_core::{
 ///     key::ParentKey,
-///     stream::{HeaderNonce, ZymicWriterBuilder},
+///     stream::{HeaderNonce, ZymicWriter},
 /// };
 ///
 /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
 /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
 /// let mut plaintext = &b"example"[..];
-/// let mut writer = ZymicWriterBuilder::new(&parent_key, nonce).build(Vec::new())?;
+/// let mut writer = ZymicWriter::new(Vec::new(), &parent_key, nonce)?;
 ///
 /// // The header has already been written to the output. It can also be
 /// // copied to a backup location.
@@ -1566,53 +1553,6 @@ impl<'a> ZymicReaderBuilder<'a> {
 
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
-impl<'a> ZymicWriterBuilder<'a> {
-    /// Create a writer builder with a caller-provided nonce and the default
-    /// frame length.
-    ///
-    /// # Security
-    ///
-    /// The `(parent_key, nonce)` pair must never have been used to encrypt a
-    /// different stream. The nonce should be generated using a
-    /// cryptographically secure random source.
-    pub fn new(parent_key: &'a ParentKey, nonce: HeaderNonce) -> Self {
-        Self {
-            parent_key,
-            nonce,
-            frame_len: FrameLength::default(),
-        }
-    }
-
-    /// Set the stream frame length.
-    pub fn with_frame_len(mut self, frame_len: FrameLength) -> Self {
-        self.frame_len = frame_len;
-        self
-    }
-
-    /// Build a writer and write its generated header to `inner`.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the header cannot be written to `inner`.
-    pub fn build<T>(self, mut inner: T) -> Result<ZymicWriter<T>, Error>
-    where
-        T: Write,
-    {
-        let header = HeaderBuilder::new(self.parent_key, &self.nonce)
-            .with_frame_len(self.frame_len)
-            .build();
-        inner.write_all(header.bytes())?;
-        let core = StreamCore::new(inner, &header);
-        Ok(ZymicWriter {
-            header,
-            core,
-            can_write: true,
-        })
-    }
-}
-
-#[cfg(feature = "std")]
-#[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<T> ZymicWriter<T> {
     /// Return the serialized header written to this encrypted stream.
     ///
@@ -1665,6 +1605,52 @@ impl<T: Write> StreamCore<T> {
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<T: Write> ZymicWriter<T> {
+    /// Create a writer with the default frame length and write its generated
+    /// header to `inner`.
+    ///
+    /// # Security
+    ///
+    /// The `(parent_key, nonce)` pair must never have been used to encrypt a
+    /// different stream. The nonce should be generated using a
+    /// cryptographically secure random source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header cannot be written to `inner`.
+    pub fn new(inner: T, parent_key: &ParentKey, nonce: HeaderNonce) -> Result<Self, Error> {
+        Self::new_with_frame_len(inner, parent_key, nonce, FrameLength::default())
+    }
+
+    /// Create a writer with the given frame length and write its generated
+    /// header to `inner`.
+    ///
+    /// # Security
+    ///
+    /// The `(parent_key, nonce)` pair must never have been used to encrypt a
+    /// different stream. The nonce should be generated using a
+    /// cryptographically secure random source.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header cannot be written to `inner`.
+    pub fn new_with_frame_len(
+        mut inner: T,
+        parent_key: &ParentKey,
+        nonce: HeaderNonce,
+        frame_len: FrameLength,
+    ) -> Result<Self, Error> {
+        let header = HeaderBuilder::new(parent_key, &nonce)
+            .with_frame_len(frame_len)
+            .build();
+        inner.write_all(header.bytes())?;
+        let core = StreamCore::new(inner, &header);
+        Ok(Self {
+            header,
+            core,
+            can_write: true,
+        })
+    }
+
     /// Finalize the stream by encrypting and writing its End Frame.
     ///
     /// This also flushes the wrapped writer. A stream that is not finalized is
