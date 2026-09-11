@@ -29,13 +29,16 @@
 //!
 #![cfg_attr(
     feature = "std",
-    doc = "- `std` → use [`crate::stream::ZymicReader`] for decryption and
-  [`crate::stream::ZymicWriter`] for encryption. They implement the appropriate
-  [`std::io`] traits over a framed AEAD stream. A writer generates and owns a
-  fresh stream header; it writes that header before the encrypted frames and
-  exposes the serialized bytes for additional backup copies. Applications
-  provide a unique, cryptographically random header nonce when constructing
-  a writer.
+    doc = "- `std` → use [`ZymicReader`] for
+    decryption and [`ZymicWriter`] for encryption. They implement the
+    appropriate [`std::io`] traits over a framed AEAD stream. A writer
+    generates and owns a fresh stream header; it writes that header
+    before the encrypted frames and exposes the serialized bytes for
+    additional backup copies. Applications provide a unique,
+    cryptographically random header nonce when constructing a writer.
+
+[`ZymicWriter`]: crate::stream::ZymicWriter
+[`ZymicReader`]: crate::stream::ZymicReader
 "
 )]
 //!
@@ -274,7 +277,7 @@ pub struct HeaderBuilder<'a> {
 ///|     63        | End Frame Flag  |       1       |
 ///```
 ///
-#[derive(Default)]
+#[derive(Default, Debug)]
 pub struct SequenceNumber {
     /// 63-bit frame index field
     frame_idx: u64,
@@ -290,8 +293,12 @@ pub struct SequenceNumber {
 ///
 #[cfg_attr(
     feature = "std",
-    doc = "For bulk encryption/decryption, prefer [`crate::stream::ZymicReader`]
-and [`crate::stream::ZymicWriter`], which implement the standard I/O traits.
+    doc = "For bulk encryption/decryption,
+    prefer [`ZymicReader`] and [`ZymicWriter`], which implement the
+    standard I/O traits.
+
+[`ZymicWriter`]: crate::stream::ZymicWriter
+[`ZymicReader`]: crate::stream::ZymicReader
 "
 )]
 /// The buffer stores three contiguous sections:
@@ -666,7 +673,6 @@ impl FrameBuf {
     ///                 Payload      Payload
     ///                 Length       Capacity
     ///             <-------------> <-------->
-    ///
     /// +----------+---------------+----------+
     /// | Seq. Num |    Payload    |  (free)  |
     /// +----------+---------------+----------+
@@ -1155,7 +1161,21 @@ impl SequenceNumber {
     /// If `is_end` is true, the returned instance is for an end
     /// frame. Otherwise, the returned instance is for a body frame.
     ///
-    /// Panics if frame_idx is >= 2^63.
+    /// # Panics
+    ///
+    /// if frame_idx is >= 2^63
+    ///
+    /// # Example
+    ///
+    ///```rust
+    ///# use crate::zymic_core::stream::v2::SequenceNumber;
+    ///
+    /// let seq_num = SequenceNumber::new(123, false);
+    ///
+    /// assert!(!seq_num.is_end());
+    /// assert_eq!(seq_num.frame_idx(), 123);
+    ///```
+    ///
     pub fn new(frame_idx: u64, is_end: bool) -> Self {
         Self::assert_frame_idx(frame_idx);
         Self { frame_idx, is_end }
@@ -1163,7 +1183,19 @@ impl SequenceNumber {
 
     /// Create a Sequence Number for a body frame.
     ///
-    /// Panics if frame_idx is >= 2^63.
+    /// # Panics
+    ///
+    /// if frame_idx is >= 2^63
+    ///
+    /// # Example
+    ///```rust
+    ///# use crate::zymic_core::stream::v2::SequenceNumber;
+    ///
+    /// let seq_num = SequenceNumber::for_body(123);
+    ///
+    /// assert!(!seq_num.is_end());
+    /// assert_eq!(seq_num.frame_idx(), 123);
+    ///```
     pub fn for_body(frame_idx: u64) -> Self {
         Self::assert_frame_idx(frame_idx);
         Self {
@@ -1174,7 +1206,19 @@ impl SequenceNumber {
 
     /// Create a Sequence Number for an end frame.
     ///
-    /// Panics if frame_idx is >= 2^63.
+    /// # Panics
+    ///
+    ///  if frame_idx is >= 2^63.
+    ///
+    /// # Example
+    ///```rust
+    ///# use crate::zymic_core::stream::v2::SequenceNumber;
+    ///
+    /// let seq_num = SequenceNumber::for_end(123);
+    ///
+    /// assert!(seq_num.is_end());
+    /// assert_eq!(seq_num.frame_idx(), 123);
+    ///```
     pub fn for_end(frame_idx: u64) -> Self {
         Self::assert_frame_idx(frame_idx);
         Self {
@@ -1183,6 +1227,18 @@ impl SequenceNumber {
         }
     }
 
+    /// Crate a Sequence Number from a little-endian byte buffer.
+    ///
+    /// # Example
+    ///```rust
+    ///# use crate::zymic_core::stream::v2::SequenceNumber;
+    ///
+    /// let bytes: [u8; 8] = [123, 0, 0, 0, 0, 0, 0, 128];
+    /// let seq_num = SequenceNumber::from_bytes(bytes);
+    ///
+    /// assert_eq!(seq_num.frame_idx(), 123);
+    /// assert!(seq_num.is_end());
+    ///```
     pub fn from_bytes(bytes: [u8; 8]) -> Self {
         let encoded = u64::from_le_bytes(bytes);
         Self {
@@ -1193,7 +1249,16 @@ impl SequenceNumber {
 
     /// Return the complete encoded sequence number, including the End
     /// Frame flag in its most significant bit.
-    fn encoded(&self) -> u64 {
+    ///
+    /// # Example
+    ///```rust
+    ///# use crate::zymic_core::stream::v2::SequenceNumber;
+    ///
+    /// let seq_num = SequenceNumber::for_end(123);
+    ///
+    /// assert_eq!(seq_num.encoded(), u64::from_le_bytes([123, 0, 0, 0, 0, 0, 0, 128]));
+    ///```
+    pub fn encoded(&self) -> u64 {
         self.frame_idx | if self.is_end { END_FRAME_MASK } else { 0 }
     }
 
@@ -1211,6 +1276,14 @@ impl SequenceNumber {
 
     /// Return the little-endian byte representation of the Sequence
     /// Number.
+    ///
+    /// # Example
+    ///```rust
+    ///# use crate::zymic_core::stream::v2::SequenceNumber;
+    ///
+    /// let seq_num = SequenceNumber::for_end(123);
+    ///
+    /// assert_eq!(seq_num.to_bytes(), [123, 0, 0, 0, 0, 0, 0, 128]);
     pub fn to_bytes(&self) -> [u8; 8] {
         let encoded = self.encoded();
         encoded.to_le_bytes()

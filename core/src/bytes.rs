@@ -55,8 +55,7 @@ macro_rules! byte_array {
 /// # Examples
 ///
 ///```
-/// use zymic_core::bytes::ByteArray;
-///
+///# use zymic_core::bytes::ByteArray;
 /// const BUF_LEN: usize = 4;
 /// type MyBuf = ByteArray<BUF_LEN>;
 ///
@@ -74,8 +73,7 @@ macro_rules! byte_array {
 /// using the `byte_array!` macro.
 ///
 ///```
-///use zymic_core::byte_array;
-///
+///# use zymic_core::byte_array;
 /// let bytes = byte_array![1, 2, 3, 4];
 /// assert_eq!(bytes.as_array(), &[1, 2, 3, 4]);
 ///

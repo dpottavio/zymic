@@ -12,9 +12,13 @@
 //!
 #![cfg_attr(
     feature = "std",
-    doc = "Start with the [`stream`] module and the
-[`crate::stream::ZymicReader`] and [`crate::stream::ZymicWriter`] types,
-which implement the appropriate [`std::io`] traits for file-like access.
+    doc = "Start with the [`stream::v2`] module
+    and the [`ZymicReader`] and [`ZymicWriter`] types, which implement
+    the appropriate [`std::io`] traits for file-like access.
+
+[`ZymicReader`]: crate::stream::ZymicReader
+[`ZymicWriter`]: crate::stream::ZymicWriter
+[`stream`]: crate::stream::v2
 "
 )]
 //! For embedded / `no_std` environments, use [`FrameBuf`] to build and parse
