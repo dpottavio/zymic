@@ -287,6 +287,19 @@ impl<const N: usize> ByteArray<N> {
     ///
     /// Returns an [`Error`] containing the fill function's error message if
     /// the fill function fails.
+    ///
+    /// # Example
+    ///
+    /// Fill a 16-byte array using `getrandom` as the byte source:
+    ///
+    /// ```rust
+    /// # use zymic_core::bytes::ByteArray;
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// let bytes = ByteArray::<16>::try_from_fill(getrandom::fill)?;
+    /// assert_eq!(bytes.len(), 16);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn try_from_fill<F, E>(fill: F) -> Result<Self, Error>
     where
         F: FnOnce(&mut [u8]) -> Result<(), E>,
@@ -316,7 +329,22 @@ impl<const N: usize> ByteArray<N> {
     }
 
     /// Copies a `[u8]` slice into a new ByteArray instance. Returns
-    /// `Err` if the length of 'slice' is not equal to N.
+    /// `Err` if the length of `slice` is not equal to `N`.
+    ///
+    /// # Example
+    ///
+    /// Convert a slice with the expected length, and reject a shorter slice:
+    ///
+    /// ```rust
+    /// # use zymic_core::bytes::ByteArray;
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// let input = &[1, 2, 3, 4][..];
+    /// let bytes = ByteArray::<4>::try_from_slice(input)?;
+    /// assert_eq!(bytes.as_slice(), input);
+    /// assert!(ByteArray::<4>::try_from_slice(&input[..3]).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn try_from_slice(slice: &[u8]) -> Result<Self, Error> {
         if slice.len() != N {
             Err(Error::new(ErrorKind::InvalidArrayLength(N, slice.len())))

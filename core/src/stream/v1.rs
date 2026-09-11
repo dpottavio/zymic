@@ -59,6 +59,8 @@ const HEADER_LEN: usize = MAGIC_NUM_LEN
     + HeaderMac::LEN;
 
 /// Serialized v1 stream header.
+///
+/// Use `HeaderBytes::LEN` to obtain the serialized header length in bytes.
 pub type HeaderBytes = ByteArray<HEADER_LEN>;
 
 const VERSION_OFFSET: usize = MAGIC_NUM_LEN;

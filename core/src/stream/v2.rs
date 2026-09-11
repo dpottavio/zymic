@@ -96,6 +96,8 @@ const HEADER_LEN: usize = MAGIC_NUM_LEN
     + HeaderMac::LEN;
 
 /// Stream header byte buffer.
+///
+/// Use `HeaderBytes::LEN` to obtain the serialized header length in bytes.
 pub type HeaderBytes = ByteArray<HEADER_LEN>;
 
 // Header field lengths
@@ -635,7 +637,7 @@ impl FrameBuf {
     /// The diagram below illustrates the binary layout of the buffer
     /// including the payload section. Payload data is written to the
     /// Payload section of the buffer at the specified
-    /// `payload_off`. A `payload_off of 0 is the start of the Payload
+    /// `payload_off`. A `payload_off` of 0 is the start of the Payload
     /// section.
     ///
     ///```text
@@ -656,6 +658,33 @@ impl FrameBuf {
     ///
     /// Returns an [`Error`] if `payload_off` exceeds
     /// the number of payload bytes written.
+    ///
+    /// # Example
+    ///
+    /// Append at the current payload length. A write that exceeds the remaining
+    /// capacity succeeds with a partial count; retain the rest for another frame.
+    ///
+    /// ```rust
+    /// # use zymic_core::{key::ParentKey, stream::{FrameBuf, Header, HeaderNonce}};
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+    /// # let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+    /// # let header = Header::new(&parent_key, nonce);
+    /// let mut frame = FrameBuf::new(&header);
+    /// assert_eq!(frame.write_payload(0, b"hello")?, 5);
+    /// let offset = frame.payload().len();
+    /// assert_eq!(frame.write_payload(offset, b" world")?, 6);
+    /// assert_eq!(frame.payload(), b"hello world");
+    ///
+    /// let input = vec![42; frame.payload_capacity() + 3];
+    /// let offset = frame.payload().len();
+    /// let written = frame.write_payload(offset, &input)?;
+    /// let remaining = &input[written..];
+    /// assert_eq!(remaining.len(), 3);
+    /// assert!(!frame.has_payload_capacity());
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// [`Error`]: crate::Error
     pub fn write_payload(&mut self, payload_off: usize, payload: &[u8]) -> Result<usize, Error> {
@@ -876,6 +905,39 @@ impl FrameBuf {
     /// of bytes actually written. This function does not validate or
     /// decrypt the bytes; call [`decrypt`] afterwards.
     ///
+    /// # Example
+    ///
+    /// Load one complete encrypted frame, commit its actual byte count, and
+    /// authenticate it before accessing the plaintext. The input must contain
+    /// exactly one frame, including its sequence number and authentication tag.
+    ///
+    /// ```rust
+    /// # use zymic_core::{
+    /// #     key::ParentKey,
+    /// #     stream::{FrameBuf, Header, HeaderNonce, SequenceNumber},
+    /// # };
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+    /// # let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+    /// # let header = Header::new(&parent_key, nonce);
+    /// # let mut encrypted = FrameBuf::new(&header);
+    /// # encrypted.write_payload(0, b"example")?;
+    /// # encrypted.encrypt(&SequenceNumber::for_end(0));
+    /// # let ciphertext: &[u8] = encrypted.as_ref();
+    /// let mut frame = FrameBuf::new(&header);
+    /// let bytes_written = ciphertext.len();
+    /// let chunk = frame.chunk_mut();
+    /// assert!(bytes_written <= chunk.len());
+    /// chunk[..bytes_written].copy_from_slice(ciphertext);
+    /// frame.commit_chunk_mut(bytes_written)?;
+    ///
+    /// let sequence = frame.decrypt(0)?;
+    /// assert!(sequence.is_end());
+    /// assert_eq!(frame.payload(), b"example");
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
     /// [`decrypt`]: Self::decrypt
     /// [`FrameLength`]: crate::stream::FrameLength
     /// [`commit_chunk_mut`]: Self::commit_chunk_mut
@@ -890,7 +952,11 @@ impl FrameBuf {
     /// Truncates the internal buffer to `len`. This does not perform
     /// structural validation or decryption; [`decrypt`] will do that.
     ///
-    /// # Errors Returns [`Error`] if `len` exceeds the length
+    /// See [`chunk_mut`] for an example of loading and committing a frame.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`Error`] if `len` exceeds the length
     /// of the prepared buffer.
     ///
     /// [`Error`]: crate::Error
@@ -1051,6 +1117,30 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
     /// * The frame length is invalid or unsupported.
     /// * The HKDF-derived header MAC does not match the value stored in
     ///   the header (authentication failure).
+    ///
+    /// # Example
+    ///
+    /// Authenticate serialized header bytes with the original parent key.
+    /// Modifying the stored authentication code causes validation to fail.
+    ///
+    /// ```rust
+    /// # use zymic_core::{key::ParentKey, stream::{Header, HeaderBytes, HeaderNonce}};
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+    /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+    /// let original = Header::new(&parent_key, nonce);
+    /// let serialized = original.bytes().clone();
+    ///
+    /// let decoded = Header::from_bytes(&parent_key, serialized.clone())?;
+    /// assert_eq!(decoded.bytes(), original.bytes());
+    /// assert_eq!(decoded.frame_len(), original.frame_len());
+    ///
+    /// let mut tampered = serialized;
+    /// tampered[HeaderBytes::LEN - 1] ^= 1;
+    /// assert!(Header::from_bytes(&parent_key, tampered).is_err());
+    /// # Ok(())
+    /// # }
+    /// ```
     ///
     /// [`Header`]: crate::stream::Header
     /// [`HeaderBytes`]: crate::stream::HeaderBytes
@@ -1492,6 +1582,38 @@ impl<'a> ZymicReaderBuilder<'a> {
     ///
     /// When this is set, `inner` must begin at the first encrypted frame; the
     /// builder does not consume header bytes from it.
+    ///
+    /// # Example
+    ///
+    /// Keep a separate header copy, then decrypt the frames using that copy.
+    /// The writer includes an inline header, so skip it when preparing the input.
+    ///
+    /// ```rust
+    /// # use std::io::{Read, Write};
+    /// # use zymic_core::{
+    /// #     key::ParentKey,
+    /// #     stream::{HeaderBytes, HeaderNonce, ZymicReaderBuilder, ZymicWriter},
+    /// # };
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
+    /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+    /// let mut writer = ZymicWriter::new(Vec::new(), &parent_key, nonce)?;
+    /// let detached_header = writer.header_bytes().clone();
+    /// writer.write_all(b"example")?;
+    /// writer.finish()?;
+    /// let encoded = writer.into_inner();
+    ///
+    /// let frames = &encoded[HeaderBytes::LEN..];
+    /// let mut reader = ZymicReaderBuilder::new(&parent_key)
+    ///     .with_header(detached_header)
+    ///     .build(frames)?;
+    /// let mut plaintext = Vec::new();
+    /// reader.read_to_end(&mut plaintext)?;
+    /// reader.is_eof_or_err()?;
+    /// assert_eq!(plaintext, b"example");
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn with_header(mut self, header: HeaderBytes) -> Self {
         self.header = Some(header);
         self

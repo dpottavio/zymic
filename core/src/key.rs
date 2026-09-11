@@ -52,6 +52,20 @@ impl ParentKey {
     ///
     /// Returns an [`Error`] containing the fill function's error message if
     /// either call to the fill function fails.
+    ///
+    /// # Example
+    ///
+    /// Generate a parent key's public ID and secret using `getrandom`:
+    ///
+    /// ```rust
+    /// # use zymic_core::key::ParentKey;
+    /// # fn main() -> Result<(), zymic_core::Error> {
+    /// let key = ParentKey::try_from_fill(getrandom::fill)?;
+    /// assert_eq!(key.id().len(), 16);
+    /// assert_eq!(key.secret().len(), 32);
+    /// # Ok(())
+    /// # }
+    /// ```
     pub fn try_from_fill<F, E>(mut fill: F) -> Result<Self, Error>
     where
         F: FnMut(&mut [u8]) -> Result<(), E>,
