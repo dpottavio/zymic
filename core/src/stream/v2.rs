@@ -641,17 +641,17 @@ impl FrameBuf {
     /// section.
     ///
     ///```text
-    ///             Buffer Length
-    /// <------------------------------------->
-    ///                 Payload      Payload
-    ///                 Length       Capacity
-    ///             <-------------> <-------->
-    /// +----------+---------------+----------+
-    /// | Seq. Num |    Payload    |  (free)  |
-    /// +----------+---------------+----------+
-    ///            ^
-    ///            |
-    ///            +---- payload_off: 0
+    ///                     Buffer Length
+    /// <----------------------------------------------------->
+    ///                                               Payload
+    ///                          Payload Length       Capacity
+    ///                    <-----------------------> <-------->
+    /// +-----------------+-------------------------+----------+
+    /// | Sequence Number |          Payload        |  (free)  |
+    /// +-----------------+-------------------------+----------+
+    ///                   ^
+    ///                   |
+    ///                   +---- payload_off: 0
     ///```
     ///
     /// # Errors
@@ -748,21 +748,21 @@ impl FrameBuf {
     /// encrypt at most one Frame for each Sequence Number under a
     /// given Header's Data Key. Changing an encrypted Frame requires a
     /// new Stream Header and Data Key.
+    ///  
+    /// The diagram below illustrates the binary layout of the buffer
+    /// after [`encrypt`] is called.
     ///
+    ///```text
+    ///                    <----- Cipher-text ----->
+    /// +-----------------+-------------------------+-----------+
+    /// | Sequence Number |          Payload        |  Auth Tag |
+    /// +-----------------+-------------------------+-----------+
+    ///```
     /// # Panics
     ///
     /// Panics if a Body Frame's payload does not fill the configured Frame
     /// Length - 24 bytes.
     ///
-    /// The diagram below illustrates the binary layout of the buffer
-    /// after [`encrypt`] is called.
-    ///
-    ///```text
-    ///              (Cipher-text)
-    /// +----------+---------------+-----------+
-    /// | Seq. Num |    Payload    |  Auth Tag |
-    /// +----------+---------------+-----------+
-    ///```
     /// [`encrypt`]: Self::encrypt
     /// [`SequenceNumber`]: crate::stream::SequenceNumber
     pub fn encrypt(&mut self, seq_num: &SequenceNumber) {
