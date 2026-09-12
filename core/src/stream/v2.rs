@@ -539,7 +539,8 @@ struct StreamCore<T> {
 
 /// Derive and return a stream header message digest and data key.
 fn derive_data_key(parent_key: &ParentKey, info: &[u8]) -> (HeaderMac, aes_gcm::Key<Aes256>) {
-    let hkdf = Hkdf::<Sha256>::from_prk(parent_key.secret()).expect("valid HKDF PRK length");
+    let hkdf =
+        Hkdf::<Sha256>::from_prk(parent_key.secret().as_bytes()).expect("valid HKDF PRK length");
 
     let mut header_mac = HeaderMac::default();
     hkdf.expand_multi_info(&[HEADER_MAC_KDF_LABEL, info], header_mac.as_mut())

@@ -205,10 +205,13 @@ impl KeyFile {
         let mut hash = argon_hash(self.argon, &self.id, self.date, password)?;
         let kek = KwAes256::new(hash.as_array().into());
         hash.zeroize();
-        let mut secret = ParentKeySecret::default();
-        kek.unwrap_key(&self.wrapped_secret, &mut secret)?;
+        let mut bytes = Zeroizing::new([0u8; ParentKeySecret::LEN]);
+        kek.unwrap_key(&self.wrapped_secret, bytes.as_mut())?;
 
-        Ok(ParentKey::new(self.id.clone(), secret))
+        Ok(ParentKey::new(
+            self.id.clone(),
+            ParentKeySecret::from_array(*bytes),
+        ))
     }
 
     /// Rewrap this instance with a new password.
@@ -230,10 +233,10 @@ impl KeyFile {
         let mut hash = argon_hash(argon, id, date, password)?;
         let kek = KwAes256::new(hash.as_array().into());
         hash.zeroize();
-        let mut wrapped_secret = WrappedSecret::default();
-        kek.wrap_key(secret, &mut wrapped_secret)?;
+        let mut bytes = Zeroizing::new([0u8; WrappedSecret::LEN]);
+        kek.wrap_key(secret.as_bytes(), bytes.as_mut())?;
 
-        Ok(wrapped_secret)
+        Ok(WrappedSecret::from_array(*bytes))
     }
 }
 
@@ -303,7 +306,7 @@ mod tests {
     fn key() {
         let password = "foo";
         let id = ParentKeyId::default();
-        let secret = ParentKeySecret::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
         let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
         let _ = key_file.unwrap(password).unwrap();
     }
@@ -313,7 +316,7 @@ mod tests {
         let password = "foo";
         let bad_password = "bar";
         let id = ParentKeyId::default();
-        let secret = ParentKeySecret::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
         let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
         let result = key_file.unwrap(bad_password);
         assert!(result.is_err())
@@ -323,7 +326,7 @@ mod tests {
     fn key_bad_date() {
         let password = "foo";
         let id = ParentKeyId::default();
-        let secret = ParentKeySecret::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
         let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
         let mut json = serde_json::to_value(key_file).unwrap();
         json["date"] = serde_json::Value::Number(serde_json::value::Number::from(12345));
@@ -336,7 +339,7 @@ mod tests {
     fn key_bad_id() {
         let password = "foo";
         let id = ParentKeyId::default();
-        let secret = ParentKeySecret::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
         let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
         let mut json = serde_json::to_value(key_file).unwrap();
         json["id"] = serde_json::Value::String("MDAwMDAwMDAwMDAwMDAwCg==".to_string());
@@ -349,7 +352,7 @@ mod tests {
     fn serde_non_human_readable() {
         let password = "foo";
         let id = ParentKeyId::default();
-        let secret = ParentKeySecret::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
         let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
         let blob = postcard::to_stdvec(&key_file).unwrap();
         let result: Result<KeyFile, _> = postcard::from_bytes(&blob);

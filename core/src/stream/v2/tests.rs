@@ -27,10 +27,8 @@ const TEST_NONCE: HeaderNonce = byte_array![3u8; {HeaderNonce::LEN}];
 
 fn mock_parent_key() -> ParentKey {
     const ID: ParentKeyId = byte_array![1u8; {ParentKeyId::LEN}];
-    const SECRET: ParentKeySecret = byte_array![2u8; {ParentKeySecret::LEN}];
-
     let id = ParentKeyId::from(ID);
-    let secret = ParentKeySecret::from(SECRET);
+    let secret = ParentKeySecret::from_array([2u8; ParentKeySecret::LEN]);
 
     ParentKey::new(id, secret)
 }
@@ -417,7 +415,10 @@ fn header_from_bytes_err() {
     let parent_key = mock_parent_key();
     let expected_header = Header::new(&parent_key, TEST_NONCE);
     let bytes = expected_header.bytes();
-    let bad_parent_key = ParentKey::new(parent_key.id().clone(), ParentKeySecret::default());
+    let bad_parent_key = ParentKey::new(
+        parent_key.id().clone(),
+        ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]),
+    );
 
     if let Err(e) = Header::from_bytes(&bad_parent_key, bytes.clone()) {
         assert_eq!(*e.kind(), ErrorKind::Authentication)
@@ -434,9 +435,8 @@ fn header_key_id_err() {
     let header = Header::new(&parent_key, TEST_NONCE);
 
     let wrong_id = byte_array![2u8; {ParentKeyId::LEN}];
-    let secret = byte_array![2u8; {ParentKeySecret::LEN}];
     let wrong_id = ParentKeyId::from(wrong_id);
-    let secret = ParentKeySecret::from(secret);
+    let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
     let wrong_key = ParentKey::new(wrong_id, secret);
 
     if let Err(e) = Header::from_bytes(&wrong_key, header.bytes().clone()) {

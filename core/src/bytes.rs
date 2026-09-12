@@ -174,6 +174,13 @@ impl<const N: usize> Zeroize for ByteArray<N> {
     }
 }
 
+#[cfg(feature = "zeroize")]
+impl<const N: usize> Drop for ByteArray<N> {
+    fn drop(&mut self) {
+        self.bytes.zeroize();
+    }
+}
+
 #[cfg(feature = "serde")]
 #[cfg_attr(docsrs, doc(cfg(feature = "serde")))]
 impl<const N: usize> Serialize for ByteArray<N> {

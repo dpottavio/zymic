@@ -24,10 +24,9 @@ mod core_integ_tests {
 
     fn mock_parent_key() -> ParentKey {
         const ID: ParentKeyId = byte_array![1u8; {ParentKeyId::LEN}];
-        const SECRET: ParentKeySecret = byte_array![2u8; {ParentKeySecret::LEN}];
 
         let id = ParentKeyId::from(ID);
-        let secret = ParentKeySecret::from(SECRET);
+        let secret = ParentKeySecret::from_array([2u8; ParentKeySecret::LEN]);
 
         ParentKey::new(id, secret)
     }

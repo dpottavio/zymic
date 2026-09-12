@@ -670,8 +670,7 @@ mod tests {
 
     fn v1_parent_key() -> ParentKey {
         const ID: ParentKeyId = byte_array![1u8; 16];
-        const SECRET: ParentKeySecret = byte_array![2u8; 32];
-        ParentKey::new(ID, SECRET)
+        ParentKey::new(ID, ParentKeySecret::from_array([2u8; ParentKeySecret::LEN]))
     }
 
     #[test]
