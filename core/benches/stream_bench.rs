@@ -16,7 +16,7 @@ fn stream_benchmark(c: &mut Criterion) {
     group.measurement_time(Duration::new(60, 0));
 
     let plain_txt = vec![0u8; PLAIN_TXT_LEN];
-    let parent_key = ParentKey::default();
+    let parent_key = ParentKey::new(byte_array![1u8; 16], byte_array![2u8; 32]);
 
     let frame_len = FrameLength::Len16KiB;
     let frame_len_kib = frame_len.as_usize() / 1024;

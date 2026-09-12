@@ -81,7 +81,9 @@ fn validate_header(header: &[u8], algo: CryptoAlgorithm, frame_len: FrameLength)
     }
     assert_eq!(
         TEST_NONCE,
-        (&header[NONCE_OFFSET..NONCE_OFFSET + HeaderNonce::LEN]).into()
+        (&header[NONCE_OFFSET..NONCE_OFFSET + HeaderNonce::LEN])
+            .try_into()
+            .unwrap()
     );
 
     let parent_key = mock_parent_key();
@@ -430,7 +432,12 @@ fn header_from_bytes_err() {
 fn header_key_id_err() {
     let parent_key = mock_parent_key();
     let header = Header::new(&parent_key, TEST_NONCE);
-    let wrong_key = ParentKey::default();
+
+    let wrong_id = byte_array![2u8; {ParentKeyId::LEN}];
+    let secret = byte_array![2u8; {ParentKeySecret::LEN}];
+    let wrong_id = ParentKeyId::from(wrong_id);
+    let secret = ParentKeySecret::from(secret);
+    let wrong_key = ParentKey::new(wrong_id, secret);
 
     if let Err(e) = Header::from_bytes(&wrong_key, header.bytes().clone()) {
         assert_eq!(*e.kind(), ErrorKind::ParentKeyIdMismatch)

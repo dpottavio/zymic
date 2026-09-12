@@ -204,6 +204,7 @@ const VERSION: u8 = 2;
 // AES-256-GCM using a 12-byte nonce.
 type Aes256Gcm = AesGcm<Aes256, FrameNonceLen>;
 
+#[non_exhaustive]
 #[repr(u16)]
 #[derive(Debug, PartialEq, Clone, Copy)]
 pub enum CryptoAlgorithm {
@@ -224,6 +225,7 @@ impl fmt::Display for CryptoAlgorithm {
 /// The numerical value assigned to each enum type is the bit-shift
 /// value used to compute the length in bytes. The value is written to
 /// the frame-length header field.
+#[non_exhaustive]
 #[repr(u8)]
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum FrameLength {

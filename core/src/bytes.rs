@@ -128,10 +128,30 @@ impl<const N: usize> From<[u8; N]> for ByteArray<N> {
     }
 }
 
-/// Panics if the slice does not equal `N`.
-impl<const N: usize> From<&[u8]> for ByteArray<N> {
-    fn from(slice: &[u8]) -> Self {
-        Self::from_slice(slice)
+/// Copies a slice into a new byte array, returning an error if its length
+/// does not equal `N`.
+///
+/// # Example
+///
+/// ```rust
+/// # use zymic_core::bytes::ByteArray;
+/// # fn main() -> Result<(), zymic_core::Error> {
+/// let input = &[1, 2, 3, 4][..];
+/// let bytes = ByteArray::<4>::try_from(input)?;
+/// assert_eq!(bytes.as_slice(), input);
+/// assert!(ByteArray::<4>::try_from(&input[..3]).is_err());
+/// # Ok(())
+/// # }
+/// ```
+impl<const N: usize> TryFrom<&[u8]> for ByteArray<N> {
+    type Error = Error;
+
+    fn try_from(slice: &[u8]) -> Result<Self, Self::Error> {
+        if slice.len() != N {
+            Err(Error::new(ErrorKind::InvalidArrayLength(N, slice.len())))
+        } else {
+            Ok(Self::from_slice(slice))
+        }
     }
 }
 
@@ -264,7 +284,7 @@ impl<'de, const N: usize> Visitor<'de> for ByteArrayVisitor<N> {
     where
         E: de::Error,
     {
-        ByteArray::<N>::try_from_slice(s).map_err(|_| E::invalid_length(s.len(), &self))
+        ByteArray::<N>::try_from(s).map_err(|_| E::invalid_length(s.len(), &self))
     }
 
     fn visit_str<E>(self, v: &str) -> Result<ByteArray<N>, E>
@@ -326,31 +346,6 @@ impl<const N: usize> ByteArray<N> {
     /// initialization.
     pub const fn from_array(bytes: [u8; N]) -> Self {
         Self { bytes }
-    }
-
-    /// Copies a `[u8]` slice into a new ByteArray instance. Returns
-    /// `Err` if the length of `slice` is not equal to `N`.
-    ///
-    /// # Example
-    ///
-    /// Convert a slice with the expected length, and reject a shorter slice:
-    ///
-    /// ```rust
-    /// # use zymic_core::bytes::ByteArray;
-    /// # fn main() -> Result<(), zymic_core::Error> {
-    /// let input = &[1, 2, 3, 4][..];
-    /// let bytes = ByteArray::<4>::try_from_slice(input)?;
-    /// assert_eq!(bytes.as_slice(), input);
-    /// assert!(ByteArray::<4>::try_from_slice(&input[..3]).is_err());
-    /// # Ok(())
-    /// # }
-    /// ```
-    pub fn try_from_slice(slice: &[u8]) -> Result<Self, Error> {
-        if slice.len() != N {
-            Err(Error::new(ErrorKind::InvalidArrayLength(N, slice.len())))
-        } else {
-            Ok(Self::from(slice))
-        }
     }
 
     /// Returns the length of the instance, which is always `N`.
@@ -590,8 +585,8 @@ mod tests {
     #[test]
     fn byte_array_try_from_slice() {
         const LEN: usize = 8;
-        let s = &[0u8; 2];
-        if let Err(r) = ByteArray::<LEN>::try_from_slice(s) {
+        let s = &[0u8; 2][..];
+        if let Err(r) = ByteArray::<LEN>::try_from(s) {
             let kind = r.kind();
             assert!(matches!(kind, ErrorKind::InvalidArrayLength(8, 2)));
         } else {

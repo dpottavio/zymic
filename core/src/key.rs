@@ -20,7 +20,6 @@ pub type ParentKeySecret = ByteArray<32>;
 /// - A 16-byte unique public identifier.
 ///
 /// - A 32-byte secret value used to derive the Data Key
-#[derive(Default)]
 pub struct ParentKey {
     id: ParentKeyId,
     secret: ParentKeySecret,

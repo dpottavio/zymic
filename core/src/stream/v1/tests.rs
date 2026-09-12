@@ -32,7 +32,7 @@ fn plaintext() -> Vec<u8> {
 }
 
 fn fixture_parts() -> (Header, &'static [u8]) {
-    let header_bytes = HeaderBytes::from(&FIXTURE[..HEADER_LEN]);
+    let header_bytes = HeaderBytes::try_from(&FIXTURE[..HEADER_LEN]).unwrap();
     let header = Header::from_bytes(&parent_key(), header_bytes).unwrap();
     (header, &FIXTURE[HEADER_LEN..])
 }
@@ -57,7 +57,7 @@ fn decodes_v1_multiframe_fixture() {
 
 #[test]
 fn decodes_v1_frame_with_invocation() {
-    let header_bytes = HeaderBytes::from(&INVOCATION_FIXTURE[..HEADER_LEN]);
+    let header_bytes = HeaderBytes::try_from(&INVOCATION_FIXTURE[..HEADER_LEN]).unwrap();
     let header = Header::from_bytes(&parent_key(), header_bytes).unwrap();
     let frames = &INVOCATION_FIXTURE[HEADER_LEN..];
     let mut reader = Reader::new(Cursor::new(frames), &header);
@@ -90,7 +90,7 @@ fn framebuf_decodes_v1_frames() {
 
 #[test]
 fn framebuf_encoded() {
-    let header_bytes = HeaderBytes::from(&INVOCATION_FIXTURE[..HEADER_LEN]);
+    let header_bytes = HeaderBytes::try_from(&INVOCATION_FIXTURE[..HEADER_LEN]).unwrap();
     let header = Header::from_bytes(&parent_key(), header_bytes).unwrap();
     let encoded_frame = &INVOCATION_FIXTURE[HEADER_LEN..];
     let mut frame_buf = FrameBuf::new(&header);
@@ -104,7 +104,7 @@ fn framebuf_encoded() {
 
 #[test]
 fn header_parser_only_version_one() {
-    let bytes = HeaderBytes::from(&FIXTURE[..HEADER_LEN]);
+    let bytes = HeaderBytes::try_from(&FIXTURE[..HEADER_LEN]).unwrap();
     Header::from_bytes(&parent_key(), bytes.clone()).unwrap();
 
     let error = match crate::stream::v2::Header::from_bytes(&parent_key(), bytes) {

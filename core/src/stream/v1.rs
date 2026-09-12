@@ -166,7 +166,7 @@ fn derive_data_key(
     let hkdf = Hkdf::<Sha256>::new(Some(salt), parent_key.secret());
     hkdf.expand(info, &mut hkdf_out).expect("hkdf expansion");
 
-    let digest = HeaderMac::from(&hkdf_out[..HeaderMac::LEN]);
+    let digest = HeaderMac::from_slice(&hkdf_out[..HeaderMac::LEN]);
     let mut data_key = aes_gcm::Key::<Aes256Gcm>::default();
     data_key.copy_from_slice(&hkdf_out[HeaderMac::LEN..]);
 
