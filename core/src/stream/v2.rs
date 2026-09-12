@@ -422,7 +422,7 @@ pub struct FrameBuf {
 /// let mut reader = ZymicReaderBuilder::new(&parent_key).build(encoded)?;
 /// let mut plaintext = Vec::new();
 /// copy(&mut reader, &mut plaintext)?;
-/// reader.is_eof_or_err()?;
+/// assert!(reader.is_eof());
 /// assert_eq!(plaintext, b"example");
 /// # }
 /// # Ok(())
@@ -1432,21 +1432,6 @@ impl<T> StreamCore<T> {
         )
     }
 
-    /// Confirm that the stream has ended cleanly.
-    ///
-    /// Returns `Ok(())` if the stream has reached its End Frame.
-    /// Returns an [`Error`] if the stream is not at EOF, which may indicate
-    /// that the stream was truncated or is otherwise incomplete.
-    ///
-    /// [`Error`]: crate::error::Error
-    fn is_eof_or_err(&self) -> Result<(), Error> {
-        if self.is_eof() {
-            Ok(())
-        } else {
-            Err(Error::new(ErrorKind::Truncation))
-        }
-    }
-
     /// Convert a frame index to an frame offset.
     ///
     /// A frame offset is the byte offset position at the start of a
@@ -1558,14 +1543,6 @@ impl<T> ZymicReader<T> {
     pub fn is_eof(&self) -> bool {
         self.core.is_eof()
     }
-
-    /// Confirm that an authenticated End Frame was reached.
-    ///
-    /// Call this after reading the entire stream to EOF to
-    /// distinguish a complete stream from a truncated one.
-    pub fn is_eof_or_err(&self) -> Result<(), Error> {
-        self.core.is_eof_or_err()
-    }
 }
 
 #[cfg(feature = "std")]
@@ -1612,7 +1589,7 @@ impl<'a> ZymicReaderBuilder<'a> {
     ///     .build(frames)?;
     /// let mut plaintext = Vec::new();
     /// reader.read_to_end(&mut plaintext)?;
-    /// reader.is_eof_or_err()?;
+    /// assert!(reader.is_eof());
     /// assert_eq!(plaintext, b"example");
     /// # Ok(())
     /// # }
@@ -1811,10 +1788,12 @@ impl<T: Read> StreamCore<T> {
         self.payload_pos = 0;
         let mut buf = self.frame_buf.chunk_mut();
         let mut total_len = 0;
+        let mut eof = false;
 
         while !buf.is_empty() {
             let len = self.inner.read(buf)?;
             if len == 0 {
+                eof = true;
                 break;
             }
             buf = &mut buf[len..];
@@ -1827,6 +1806,7 @@ impl<T: Read> StreamCore<T> {
         if total_len < FRAME_META_LEN {
             return Err(Error::new(ErrorKind::UnexpectedEof));
         }
+
         if total_len < self.frame_buf.frame_len {
             let encoded_seq_num = u64::from_le_bytes(
                 self.frame_buf.as_ref()[..SEQ_NUM_LEN]
@@ -1838,8 +1818,13 @@ impl<T: Read> StreamCore<T> {
             }
         }
 
-        let frame_header = self.frame_buf.decrypt(self.frame_idx)?;
-        self.end_payload_len = frame_header.is_end().then_some(self.frame_buf.payload_len);
+        let seq_num = self.frame_buf.decrypt(self.frame_idx)?;
+        if eof && !seq_num.is_end() {
+            return Err(Error::new(ErrorKind::UnexpectedEof));
+        }
+        if seq_num.is_end() {
+            self.end_payload_len = Some(self.frame_buf.payload_len);
+        }
         self.payload_pos = 0;
 
         Ok(true)
@@ -1876,7 +1861,20 @@ impl<T: Read> Read for StreamCore<T> {
         let mut total_len = 0;
 
         while !buf.is_empty() && !self.is_eof() {
-            if self.frame_payload_remaining() == 0 && self.read_next_frame()? {
+            if self.frame_payload_remaining() == 0 {
+                // Return any plaintext already copied before attempting
+                // another frame that could fail.
+                if total_len > 0 {
+                    break;
+                }
+
+                // Sequential reading must encounter an authenticated End
+                // Frame before the underlying input ends. Keep the helper's
+                // no-frame result available for seeking exactly to EOF.
+                if !self.read_next_frame()? {
+                    return Err(Error::new(ErrorKind::UnexpectedEof).into());
+                }
+
                 // The End Frame consumes the current sequence number but
                 // does not require a subsequent one. This allows
                 // the maximum 63-bit counter to be used by a valid terminal
@@ -2214,11 +2212,11 @@ impl<T: Seek + Read> Seek for ZymicReader<T> {
     /// # Integrity
     ///
     /// Seeking does not authenticate skipped frames. A successful seek,
-    /// subsequent read, or call to [`Self::is_eof_or_err`] does not establish
+    /// subsequent read, or call to [`Self::is_eof`] does not establish
     /// the integrity of the entire stream.
     ///
     /// To validate the entire stream, read sequentially from frame counter
-    /// zero through the End Frame, then call [`Self::is_eof_or_err`].
+    /// zero through EOF. Reading fails if the required End Frame is missing.
     fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
         self.core.seek(pos)
     }

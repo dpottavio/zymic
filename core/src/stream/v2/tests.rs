@@ -1059,7 +1059,7 @@ fn stream_max_seq_end() {
         StreamCore::new_with_frame_idx(Cursor::new(cipher_txt), &header, start_frame_idx);
     let mut decoded = Vec::new();
     reader.read_to_end(&mut decoded).unwrap();
-    reader.is_eof_or_err().unwrap();
+    assert!(reader.is_eof());
     assert_eq!(decoded, plain_txt);
 }
 
@@ -1535,6 +1535,51 @@ fn stream_truncated_err() {
 
 #[cfg(feature = "std")]
 #[test]
+fn reader_truncate_header_no_end_frame() {
+    let parent_key = mock_parent_key();
+    let mut writer = ZymicWriter::new(Vec::new(), &parent_key, TEST_NONCE).unwrap();
+    writer.finish().unwrap();
+    let mut cipher_txt = writer.into_inner();
+
+    // Even an empty plaintext requires an authenticated End Frame.
+    cipher_txt.truncate(HeaderBytes::LEN);
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .build(Cursor::new(cipher_txt))
+        .unwrap();
+    let mut decoded = Vec::new();
+
+    reader
+        .read_to_end(&mut decoded)
+        .expect_err("a header without an End Frame must report truncation");
+    assert!(decoded.is_empty());
+    assert!(!reader.is_eof());
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn reader_truncate_copy_no_end_frame() {
+    let parent_key = mock_parent_key();
+    let frame_len = FrameLength::Len4KiB;
+    let payload_len = frame_len.as_usize() - FRAME_META_LEN;
+    let mut writer =
+        ZymicWriter::new_with_frame_len(Vec::new(), &parent_key, TEST_NONCE, frame_len).unwrap();
+    writer.write_all(&vec![0x42; payload_len + 1]).unwrap();
+    writer.finish().unwrap();
+    let mut cipher_txt = writer.into_inner();
+
+    // Retain the complete Body Frame and remove the following End Frame.
+    cipher_txt.truncate(HeaderBytes::LEN + frame_len.as_usize());
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .build(Cursor::new(cipher_txt))
+        .unwrap();
+
+    std::io::copy(&mut reader, &mut Vec::new())
+        .expect_err("copy must reject EOF after a Body Frame without an End Frame");
+    assert!(!reader.is_eof());
+}
+
+#[cfg(feature = "std")]
+#[test]
 fn stream_io_copy_aligned() {
     stream_io_copy(128);
 }
@@ -1578,7 +1623,7 @@ fn inline_header_and_backup_round_trip() {
         .unwrap();
     let mut decoded = Vec::new();
     reader.read_to_end(&mut decoded).unwrap();
-    reader.is_eof_or_err().unwrap();
+    assert!(reader.is_eof());
     assert_eq!(decoded, plain_txt);
 }
 
@@ -1603,7 +1648,7 @@ fn detached_header_round_trip() {
         .unwrap();
     let mut decoded = Vec::new();
     reader.read_to_end(&mut decoded).unwrap();
-    reader.is_eof_or_err().unwrap();
+    assert!(reader.is_eof());
     assert_eq!(decoded, plain_txt);
 }
 
@@ -1625,7 +1670,7 @@ fn reader_builder_sets_initial_seq_num() {
         .unwrap();
     let mut decoded = Vec::new();
     reader.read_to_end(&mut decoded).unwrap();
-    reader.is_eof_or_err().unwrap();
+    assert!(reader.is_eof());
     assert_eq!(decoded, plain_txt);
 }
 

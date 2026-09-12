@@ -461,7 +461,6 @@ where
     let mut buf_writer = io::BufWriter::new(output);
     let mut reader = ZymicReaderBuilder::new(key).build(input)?;
     io::copy(&mut reader, &mut buf_writer)?;
-    reader.is_eof_or_err()?;
     buf_writer.flush()?;
     Ok(())
 }
