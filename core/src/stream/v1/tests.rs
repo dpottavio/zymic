@@ -110,7 +110,7 @@ fn header_parser_only_version_one() {
         Err(error) => error,
         Ok(_) => panic!("v2 parser accepted a v1 header"),
     };
-    assert_eq!(error.kind(), &ErrorKind::UnsupportedVersion(1));
+    assert!(matches!(error.kind(), &ErrorKind::UnsupportedVersion(1)));
 }
 
 #[test]
@@ -136,10 +136,10 @@ fn missing_end_frame() {
 
     reader.read_to_end(&mut decoded).unwrap();
     assert_eq!(decoded, &plaintext()[..V1_FRAME_LEN - 32]);
-    assert_eq!(
+    assert!(matches!(
         reader.is_eof_or_err().unwrap_err().kind(),
         &ErrorKind::Truncation
-    );
+    ));
 }
 
 #[test]

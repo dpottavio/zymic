@@ -3,12 +3,12 @@
 use alloc::string::{String, ToString};
 use core::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum ErrorKind {
     Authentication,
     ByteFill(String),

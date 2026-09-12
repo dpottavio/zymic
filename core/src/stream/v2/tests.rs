@@ -421,7 +421,7 @@ fn header_from_bytes_err() {
     );
 
     if let Err(e) = Header::from_bytes(&bad_parent_key, bytes.clone()) {
-        assert_eq!(*e.kind(), ErrorKind::Authentication)
+        assert!(matches!(e.kind(), ErrorKind::Authentication))
     } else {
         panic!("expected an error")
     }
@@ -440,7 +440,7 @@ fn header_key_id_err() {
     let wrong_key = ParentKey::new(wrong_id, secret);
 
     if let Err(e) = Header::from_bytes(&wrong_key, header.bytes().clone()) {
-        assert_eq!(*e.kind(), ErrorKind::ParentKeyIdMismatch)
+        assert!(matches!(e.kind(), ErrorKind::ParentKeyIdMismatch))
     } else {
         panic!("expected an error")
     }

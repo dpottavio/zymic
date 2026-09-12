@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 use std::{fmt, time::SystemTimeError};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub struct Error {
     kind: ErrorKind,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug)]
 pub(crate) enum ErrorKind {
     Authentication,
     Core(zymic_core::Error),
