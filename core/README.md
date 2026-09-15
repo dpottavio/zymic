@@ -11,17 +11,11 @@
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/dpottavio/zymic/blob/main/LICENSE
 
-Core library providing the primitives and streaming APIs for the Zymic
-authenticated encryption format. It implements separate `ZymicReader` and
-`ZymicWriter` types and frame-based AEAD encryption/decryption with support for
-both `std` and `no_std` environments.
-
-The `std` writer accepts a caller-generated header nonce, so the core API does
-not require a particular entropy provider. A parent key and nonce pair must
-never be reused to encrypt a different stream.
-
-For more information regarding the design and format of Zymic, see the
-source repo's main [README](../README.md#design-principles).
+An implementation of the Zymic Authenticated Encryption stream
+format. This crate may be used to encrypt and authenticate data at
+rest. For more information regarding the design and format of Zymic,
+see the source repo's main
+[README](https://github.com/dpottavio/zymic#-design-principles).
 
 ## License
 

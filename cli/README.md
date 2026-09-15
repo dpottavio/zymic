@@ -22,9 +22,13 @@ tampering, truncation, or reordering.
 files or through `stdin`/`stdout`. To encrypt a directory or multiple
 files, first package them into a single archive (e.g., `tar`, `zip`).
 
+For more information regarding the design and format of Zymic, see the
+source repo's main
+[README](https://github.com/dpottavio/zymic#-design-principles).
+
 ## Install
 
-### From Source (Linux/macOS/Windows)
+### From Cargo (Linux/macOS/Windows)
 
 1. [Install Rust](https://www.rust-lang.org/learn/get-started).
 
