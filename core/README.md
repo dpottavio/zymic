@@ -20,6 +20,9 @@ The `std` writer accepts a caller-generated header nonce, so the core API does
 not require a particular entropy provider. A parent key and nonce pair must
 never be reused to encrypt a different stream.
 
+For more information regarding the design and format of Zymic, see the
+source repo's main [README](../README.md#design-principles).
+
 ## License
 
 All code and documentation in this repository is licensed under the

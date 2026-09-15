@@ -1,12 +1,16 @@
 // SPDX-License-Identifier: MIT
 
-//! Zymic: a streaming Authenticated Encryption with Associated Data
-//! (AEAD) format.
+//! Zymic
 //!
-//! This crate provides a compact frame-based format and supporting types for
-//! encrypting large streams (files, pipes) with integrity and authenticity.
-//! It is suitable for at-rest encryption on disk and for sequential or random
-//! access to encrypted data.
+//! This crate provides an implementation of the Zymic Authenticated
+//! Encryption stream format. It supports encrypting large streams
+//! (e.g., files, pipes) with integrity and authenticity. It is
+//! suitable for at-rest encryption on disk and for sequential or
+//! random access to encrypted data.
+//!
+//! For more information on the design and format of Zymic, see the
+//! source repo's main
+//! [README](https://github.com/dpottavio/zymic/blob/main/README.md#design-principles).
 //!
 //! # Getting Started
 //!

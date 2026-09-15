@@ -3,10 +3,10 @@
 //! # Zymic Stream
 //!
 //! Zymic is a stream‑oriented encryption format for protecting data
-//! at rest using AEAD (Authenticated Encryption with Associated
-//! Data). It divides plaintext into independently encrypted frames
-//! and authenticates both metadata and payloads, enabling detection
-//! of tampering, reordering, and truncation.
+//! at rest using an Authenticated Encryption with Associated Data
+//! (AEAD) cipher. It divides plaintext into independently encrypted
+//! frames and authenticates both metadata and payloads, enabling
+//! detection of tampering, reordering, and truncation.
 //!
 //! ## Format
 //!
@@ -22,6 +22,10 @@
 //! +--------+--------------+--------------+------------+
 //!```
 //!
+//! For more information on the design and format of Zymic, see the
+//! source repo's main
+//! [README](https://github.com/dpottavio/zymic/blob/main/README.md#design-principles).
+//!
 //! ## Getting Started
 //!
 //! Choose an API based on whether the Rust standard library is
@@ -31,7 +35,7 @@
     feature = "std",
     doc = "- `std` → use [`ZymicReader`] for
     decryption and [`ZymicWriter`] for encryption. They implement the
-    appropriate [`std::io`] traits over a framed AEAD stream. A writer
+    appropriate [`std::io`] traits over a framed AE stream. A writer
     generates and owns a fresh stream header; it writes that header
     before the encrypted frames and exposes the serialized bytes for
     additional backup copies. Applications provide a unique,

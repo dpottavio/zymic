@@ -1,4 +1,4 @@
-# Zymic AEAD Stream Format
+# Zymic - An Authenticated Encryption Stream Format
 
 *Format version 2*
 
@@ -40,10 +40,10 @@ algorithm.
 
 ## Overview
 
-Zymic is an AEAD stream protocol designed to secure plaintext
-data. The protocol operates by dividing plaintext into discrete
-segments, each of which is independently encrypted using an AEAD
-cipher and the Stream's Data Key.
+Zymic is an Authenticated Encryption stream protocol designed to
+secure plaintext data. The protocol operates by dividing plaintext
+into discrete segments, each of which is independently encrypted using
+an AEAD cipher and the Stream's Data Key.
 
 Zymic is a variant of the [STREAM online authenticated-encryption
 construction](https://eprint.iacr.org/2015/189.pdf) described by Hoang
@@ -72,7 +72,7 @@ Frames MUST NOT be modified. Any change to the plaintext MUST be
 encoded as a new Stream.
 
 ```
-<--------------- Stream ---------------->
+<--------------- Stream --------------->
 
 +--------+---------+---------+---------+
 | Header | Frame 1 | Frame 2 | Frame 3 |
