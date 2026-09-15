@@ -1,4 +1,4 @@
-# Zymic
+# 🔒 Zymic
 
 Zymic is a streaming Authenticated Encryption format for securing data
 at rest. It's a variant of the
@@ -7,7 +7,7 @@ AEAD (Authenticated Encryption with Associated Data) to provide both
 confidentiality and integrity. The format is [openly
 specified](./DESIGN.md), with a reference implementation in Rust.
 
-## Design Principles
+## 📐 Design Principles
 
 The Zymic format is fully [documented](./DESIGN.md) in this repo. Its
 core design principles are summarized below.
@@ -38,7 +38,7 @@ core design principles are summarized below.
 * **Resource Efficiency**: Streams can be processed with modest,
   bounded memory requirements regardless of their overall size.
 
-## Rust Crates
+## 🦀 Rust Crates
 
 This repository contains the following Rust crates:
 
@@ -57,7 +57,7 @@ This repository contains the following Rust crates:
 [core-docs-badge]: https://docs.rs/zymic_core/badge.svg
 [core-docs-url]: https://docs.rs/zymic_core
 
-## License
+## ⚖️ License
 
 All code and documentation in this repository is licensed under the
 [MIT License](https://opensource.org/license/MIT).
