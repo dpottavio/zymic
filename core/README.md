@@ -1,4 +1,4 @@
-# zymic_core
+# 🔒 zymic_core
 
 [![crates-badge][crates-badge]][crates-url]
 [![docs-badge][docs-badge]][docs-url]
@@ -17,7 +17,7 @@ rest. For more information regarding the design and format of Zymic,
 see the source repo's main
 [README](https://github.com/dpottavio/zymic#-design-principles).
 
-## License
+## ⚖️ License
 
 All code and documentation in this repository is licensed under the
 [MIT License](https://opensource.org/license/MIT).
