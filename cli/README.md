@@ -1,4 +1,4 @@
-# Zymic CLI
+# 🔒 Zymic CLI
 
 [![crates-badge][crates-badge]][crates-url]
 [![docs-badge][docs-badge]][docs-url]
@@ -26,7 +26,7 @@ For more information regarding the design and format of Zymic, see the
 source repo's main
 [README](https://github.com/dpottavio/zymic#-design-principles).
 
-## Install
+## 📦 Install
 
 ### From Cargo (Linux/macOS/Windows)
 
@@ -71,7 +71,7 @@ overriden by setting the `PREFIX` environment variable.
 PREFIX="$HOME/.local" ./install.sh
 ```
 
-## Quick start
+## 🚀 Quick start
 
 ```bash
 # Create a key (prompts for a new password)
@@ -86,7 +86,7 @@ zymic dec foo.txt.zym
 # Decrypt a legacy version 1 file
 zymic dec --v1 foo-v1.txt.zym
 ```
-## Usage
+## ⌨️ Usage
 
 ```
 Usage: zymic <COMMAND>
@@ -106,9 +106,9 @@ Options:
           Print version
 ```
 
-## Subcommands
+### Subcommands
 
-### `enc`
+#### `enc`
 
 Encrypt data.
 
@@ -127,7 +127,7 @@ Options:
 
 Default output is `FILE` + "`.zym`" (e.g., `foo.txt` → `foo.txt.zym`)
 
-### `dec`
+#### `dec`
 
 Decrypt data.
 
@@ -149,7 +149,7 @@ Options:
 Default output strips the `.zym` extension from the `FILE` (e.g.,
 `foo.txt.zym` → `foo.txt`).
 
-### `info`
+#### `info`
 
 Display encrypted file header information. Use `--auth` to authenticate the
 header with a key file.
@@ -166,7 +166,7 @@ Options:
   -h, --help       Print help
 ```
 
-### `key new`
+#### `key new`
 
 Create a new key file.
 
@@ -199,7 +199,7 @@ Options:
           Print help (see a summary with '-h')
 ```
 
-### `key info`
+#### `key info`
 
 Display key file metadata information
 
@@ -212,7 +212,7 @@ Options:
   -h, --help       Print help
 ```
 
-### `key password`
+#### `key password`
 
 Change password for a key file.
 
@@ -224,26 +224,26 @@ Options:
   -h, --help       Print help
 ```
 
-### Environment Variables
+#### Environment Variables
 
 `ZYMIC_DIR` overrides the default configuration directory used to
 locate the key file. If unset, the default is `$HOME/.zymic` (on
 Linux/macOS) or `%USERPROFILE%\.zymic` (on Windows).
 
-### Exit Status
+#### Exit Status
 
 * 0: Success.
 
 * non-zero: An error occurred (invalid arguments, I/O error, integrity
   check failed, bad password, etc.)
 
-### Files
+#### Files
 
 * Default key path: `$ZYMIC_DIR/zymic_key.json`
 
 * Default config directory if ZYMIC_DIR is not set: `$HOME/.zymic`
 
-## Key File
+## 🔑 Key File
 
 `zymic` uses a password-protected key file to encrypt and decrypt
 data. The key file contains a Parent Key, from which a unique,
@@ -253,7 +253,7 @@ used to encrypt the input file.
 The key file is required for decryption.  If the key file is lost, any
 data encrypted with it is permanently unrecoverable.
 
-## Examples
+## 💡 Examples
 
 ```bash
 # Encrypt a file to the default output (adds ".zym"):
@@ -273,7 +273,7 @@ zymic dec -o - src.tar.zym | tar xf -
 
 ```
 
-## License
+## ⚖️ License
 
 All code and documentation in this repository is licensed under the
 [MIT License](https://opensource.org/license/MIT).
