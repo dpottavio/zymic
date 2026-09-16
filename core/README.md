@@ -24,3 +24,8 @@ repo's main
 [README](https://github.com/dpottavio/zymic#-design-principles).
 
 See [API documentation][docs-url] for usage examples.
+
+## ⚖️  License
+
+This crate is licensed under the [MIT
+License](https://opensource.org/license/MIT).

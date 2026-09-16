@@ -12,35 +12,48 @@ specified](./DESIGN.md), with a reference implementation in Rust.
 The Zymic format is fully [documented](./DESIGN.md) in this repo. Its
 core design principles are summarized below.
 
-* **STREAM Foundation**: Based on [STREAM online
-  authenticated-encryption
-  construction](https://eprint.iacr.org/2015/189.pdf), which has a
-  formal security analysis.
-
-* **Stream Oriented**: Encrypt and authenticate data streams,
-  including very large ones.
-
 * **Authenticated Encryption**: All encrypted data is authenticated,
   providing both confidentiality and integrity.
+
+* **Immutability**: Encoded streams are not modified in
+  place. Modifications to plaintext require a new encoded stream.
+
+* **Key Commitment**: Encoded streams are cryptographically bound to
+  their Parent Key, with the design intended to prevent a stream from
+  successfully authenticating under a different Parent Key.
 
 * **Key Separation**: Each encoded data stream is encrypted with a
    one-time Data Key derived from a Parent Key. A compromised Data Key
    does not compromise the Parent Key or Data Keys used by other
    streams.
 
-* **Key Commitment**: Encoded streams are cryptographically bound to
-  their Parent Key, with the design intended to prevent a stream from
-  successfully authenticating under a different Parent Key.
-
-* **Immutability**: Encoded streams must not be modified in
-  place. Modifications to plaintext require a new encoded stream.
-
 * **Resource Efficiency**: Streams can be processed with modest,
   bounded memory requirements regardless of their overall size.
 
-## 🦀 Rust Crates
+* **Stream Oriented**: Encrypt and authenticate data streams,
+  including very large ones.
 
-This repository contains the following Rust crates:
+* **STREAM Foundation**: Based on [STREAM online
+  authenticated-encryption
+  construction](https://eprint.iacr.org/2015/189.pdf), which has a
+  formal security analysis.
+
+## 🦀 Implementation
+
+This repo contains a reference library implementation and a CLI
+utility, both written in Rust.
+
+The reference implementation is the Rust crate
+[zymic_core](https://crates.io/crates/zymic_core), which provides
+`std::io` stream interfaces for applications that support `std`. For
+non-std applications, a lower level frame buffer is available.
+
+The CLI utility [zymic_cli](https://crates.io/crates/zymic_cli)
+implements file encryption using the
+[zymic_core](https://crates.io/crates/zymic_core) crate.
+
+See table below for a detailed list of published Rust crates managed
+by this project.
 
 | Crate Name | crates.io | Rust Docs | Description
 |------------|-----------|-----------|------------|
