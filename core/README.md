@@ -11,16 +11,16 @@
 [mit-badge]: https://img.shields.io/badge/license-MIT-blue.svg
 [mit-url]: https://github.com/dpottavio/zymic/blob/main/LICENSE
 
-An implementation of the Zymic Authenticated Encryption stream
-format. This crate may be used to encrypt and authenticate data at
-rest. For more information regarding the design and format of Zymic,
-see the source repo's main
+An implementation of the Zymic authenticated encryption format for
+protecting data at rest. It provides streaming encryption and
+decryption through Rust’s `std::io` traits, plus lower-level frame APIs
+for `no_std` environments with allocation support. Large streams can be
+processed with bounded memory.
+
+Zymic is a variant of the [STREAM online authenticated-encryption
+construction](https://eprint.iacr.org/2015/189.pdf). For more
+information regarding the design and format of Zymic, see the source
+repo's main
 [README](https://github.com/dpottavio/zymic#-design-principles).
 
-## ⚖️ License
-
-All code and documentation in this repository is licensed under the
-[MIT License](https://opensource.org/license/MIT).
-
-You are free to use, modify, and distribute this project in accordance
-with the terms of that license.
+See [API documentation][docs-url] for usage examples.

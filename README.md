@@ -57,10 +57,7 @@ This repository contains the following Rust crates:
 [core-docs-badge]: https://docs.rs/zymic_core/badge.svg
 [core-docs-url]: https://docs.rs/zymic_core
 
-## ⚖️ License
+## ⚖️  License
 
 All code and documentation in this repository is licensed under the
 [MIT License](https://opensource.org/license/MIT).
-
-You are free to use, modify, and distribute this project in accordance
-with the terms of that license.
