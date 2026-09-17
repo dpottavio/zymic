@@ -665,7 +665,7 @@ The Key File is stored as JSON with the following fields:
 ```
 {
   "id": "<Base64>",
-  "date": "<UNIX timestamp>",
+  "date": <UNIX timestamp>,
   "argon": <argon setting>,
   "wrapped_secret": "<Base64>"
 }
@@ -678,13 +678,7 @@ identifier associates Streams with the correct Parent Key.
 
 ### date
 A UNIX timestamp (in seconds) indicating when the key file was
-created. It is stored in JSON as a string containing the canonical
-base-10 representation of a 64-bit unsigned integer. The string MUST
-contain only ASCII digits `0` through `9` and MUST NOT contain leading
-zeros unless its value is exactly `"0"`. Signs, whitespace, decimal
-points, and exponent notation MUST be rejected. When used in the
-Argon2id salt, the parsed integer MUST be serialized as an eight-byte
-little-endian unsigned integer.
+created. It is stored in JSON as a number.
 
 ### argon
 An integer preset identifier representing the Argon2id
