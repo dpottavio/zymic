@@ -489,11 +489,17 @@ pub struct ZymicReaderBuilder<'a> {
 pub struct ZymicWriter<T> {
     header: Header,
     core: StreamCore<T>,
-    /// Whether this writer may still emit encrypted frames.
-    ///
-    /// Finalization or any write failure permanently disables further writes
-    /// so that a possibly exposed frame nonce cannot be reused.
-    can_write: bool,
+}
+
+#[cfg(feature = "std")]
+#[derive(PartialEq)]
+enum StreamState {
+    /// Stream is active and available for IO.
+    Active,
+    /// Stream has written its End Frame.
+    Finished,
+    /// An error has occurred during IO.
+    Failed,
 }
 
 /// Shared internal implementation for reader and writer frame processing.
@@ -539,6 +545,8 @@ struct StreamCore<T> {
     /// On write, encrypted data is copied from `frame_buf` into
     /// `inner`.
     inner: T,
+    /// Current state of the stream.
+    state: StreamState,
 }
 
 /// Derive and return a stream header message digest and data key.
@@ -649,7 +657,7 @@ impl FrameBuf {
     ///
     ///```text
     ///                     Buffer Length
-    /// <----------------------------------------------------->
+    ///  <---------------------------------------------------->
     ///                                               Payload
     ///                          Payload Length       Capacity
     ///                    <-----------------------> <-------->
@@ -1418,6 +1426,7 @@ impl<T> StreamCore<T> {
             end_payload_len: None,
             frame_buf,
             inner,
+            state: StreamState::Active,
         }
     }
     /// Consume this instance and return the inner type.
@@ -1740,11 +1749,7 @@ impl<T: Write> ZymicWriter<T> {
         let header = Header::new_with_frame_len(parent_key, nonce, frame_len);
         inner.write_all(header.bytes())?;
         let core = StreamCore::new(inner, &header);
-        Ok(Self {
-            header,
-            core,
-            can_write: true,
-        })
+        Ok(Self { header, core })
     }
 
     /// Finalize the stream by encrypting and writing its End Frame.
@@ -1754,14 +1759,20 @@ impl<T: Write> ZymicWriter<T> {
     ///
     /// Once this is called, the stream cannot be written to.
     pub fn finish(&mut self) -> Result<(), Error> {
-        if !self.can_write {
-            return Err(Error::new(ErrorKind::StreamImmutable));
+        match self.core.state {
+            StreamState::Failed => Err(Error::new(ErrorKind::StreamFailed)),
+            StreamState::Finished => Err(Error::new(ErrorKind::StreamFinished)),
+            StreamState::Active => {
+                // Set the stream to failed in case of a panic and stack
+                // unwinding.
+                self.core.state = StreamState::Failed;
+                let result = self.core.eof();
+                if result.is_ok() {
+                    self.core.state = StreamState::Finished
+                }
+                result
+            }
         }
-
-        // Disable retries before emitting the End Frame. A failed write or
-        // flush may still have exposed its nonce and ciphertext.
-        self.can_write = false;
-        self.core.eof()
     }
 }
 
@@ -1917,7 +1928,20 @@ impl<T: Read> Read for StreamCore<T> {
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<T: Read> Read for ZymicReader<T> {
     fn read(&mut self, buf: &mut [u8]) -> Result<usize, std::io::Error> {
-        self.core.read(buf)
+        match self.core.state {
+            StreamState::Failed => Err(Error::new(ErrorKind::StreamFailed).into()),
+            StreamState::Finished => unreachable!("Reader cannot be finished"),
+            StreamState::Active => {
+                // Set the stream to failed in case of a panic and stack
+                // unwinding.
+                self.core.state = StreamState::Failed;
+                let result = self.core.read(buf);
+                if result.is_ok() {
+                    self.core.state = StreamState::Active;
+                }
+                result
+            }
+        }
     }
 }
 
@@ -1994,27 +2018,34 @@ impl<T: Write> Write for StreamCore<T> {
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl<T: Write> Write for ZymicWriter<T> {
     fn write(&mut self, buf: &[u8]) -> Result<usize, std::io::Error> {
-        if buf.is_empty() {
-            return Ok(0);
+        match self.core.state {
+            StreamState::Failed => Err(Error::new(ErrorKind::StreamFailed).into()),
+            StreamState::Finished => Err(Error::new(ErrorKind::StreamFinished).into()),
+            StreamState::Active => {
+                if buf.is_empty() {
+                    Ok(0)
+                } else {
+                    // Set the stream to failed in case of a panic and stack
+                    // unwinding.
+                    self.core.state = StreamState::Failed;
+                    let result = self.core.write(buf);
+                    if result.is_ok() {
+                        self.core.state = StreamState::Active
+                    }
+                    result
+                }
+            }
         }
-        if !self.can_write {
-            return Err(Error::new(ErrorKind::StreamImmutable).into());
-        }
-
-        // Disable writes before delegating so that an unwind from the wrapped
-        // writer also leaves this writer poisoned. A partial write may have
-        // exposed the current nonce and ciphertext.
-        self.can_write = false;
-        let result = self.core.write(buf);
-        if result.is_ok() {
-            self.can_write = true;
-        }
-        result
     }
 
-    /// Does nothing.
+    /// Does nothing. But will error if the stream is in a failed or
+    /// finished state.
     fn flush(&mut self) -> Result<(), std::io::Error> {
-        self.core.flush()
+        match self.core.state {
+            StreamState::Failed => Err(Error::new(ErrorKind::StreamFailed).into()),
+            StreamState::Finished => Err(Error::new(ErrorKind::StreamFinished).into()),
+            StreamState::Active => self.core.flush(),
+        }
     }
 }
 
@@ -2222,7 +2253,18 @@ impl<T: Seek + Read> Seek for ZymicReader<T> {
     /// To validate the entire stream, read sequentially from frame counter
     /// zero through EOF. Reading fails if the required End Frame is missing.
     fn seek(&mut self, pos: SeekFrom) -> Result<u64, std::io::Error> {
-        self.core.seek(pos)
+        if self.core.state == StreamState::Failed {
+            Err(Error::new(ErrorKind::StreamFailed).into())
+        } else {
+            // Set the stream to failed in case of a panic and stack
+            // unwinding.
+            self.core.state = StreamState::Failed;
+            let result = self.core.seek(pos);
+            if result.is_ok() {
+                self.core.state = StreamState::Active;
+            }
+            result
+        }
     }
 }
 

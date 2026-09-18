@@ -1119,10 +1119,18 @@ fn stream_write_after_eof_err() {
 
     let err = writer.write(&plain_txt).unwrap_err();
     let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
-    assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
+    assert!(matches!(inner.kind(), ErrorKind::StreamFinished));
+
+    let err = writer.write(&[]).unwrap_err();
+    let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFinished));
+
+    let err = writer.flush().unwrap_err();
+    let inner = err.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFinished));
 
     let err = writer.finish().unwrap_err();
-    assert!(matches!(err.kind(), ErrorKind::StreamImmutable));
+    assert!(matches!(err.kind(), ErrorKind::StreamFinished));
 }
 
 #[cfg(feature = "std")]
@@ -1580,6 +1588,58 @@ fn reader_truncate_copy_no_end_frame() {
 
 #[cfg(feature = "std")]
 #[test]
+fn reader_failure_disables_further_io() {
+    let parent_key = mock_parent_key();
+    let mut writer = ZymicWriter::new(Vec::new(), &parent_key, TEST_NONCE).unwrap();
+    writer.finish().unwrap();
+    let mut cipher_txt = writer.into_inner();
+    cipher_txt.truncate(HeaderBytes::LEN);
+
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .build(Cursor::new(cipher_txt))
+        .unwrap();
+    let mut buf = [0u8; 1];
+
+    let error = reader.read(&mut buf).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::UnexpectedEof));
+
+    let error = reader.read(&mut buf).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+
+    let error = reader.seek(SeekFrom::Start(0)).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn reader_seek_failure_disables_further_io() {
+    let parent_key = mock_parent_key();
+    let mut writer = ZymicWriter::new(Vec::new(), &parent_key, TEST_NONCE).unwrap();
+    writer.write_all(b"payload").unwrap();
+    writer.finish().unwrap();
+
+    let mut reader = ZymicReaderBuilder::new(&parent_key)
+        .build(Cursor::new(writer.into_inner()))
+        .unwrap();
+
+    let error = reader.seek(SeekFrom::End(1)).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::UnexpectedEof));
+
+    let error = reader.seek(SeekFrom::Start(0)).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+
+    let error = reader.read(&mut [0u8; 1]).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+}
+
+#[cfg(feature = "std")]
+#[test]
 fn stream_io_copy_aligned() {
     stream_io_copy(128);
 }
@@ -1760,7 +1820,92 @@ fn writer_failure_disables_further_writes() {
     assert!(writer.write_all(&vec![0; frame_len.as_usize()]).is_err());
     let error = writer.write(&[1]).unwrap_err();
     let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
-    assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+
+    let error = writer.flush().unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+
+    let error = writer.finish().unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::StreamFailed));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn writer_finish_write_failure_disables_further_io() {
+    struct FailAfterHeader {
+        header_written: bool,
+    }
+
+    impl Write for FailAfterHeader {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            if self.header_written {
+                Err(std::io::Error::other("End Frame write failed"))
+            } else {
+                self.header_written = true;
+                Ok(buf.len())
+            }
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut writer = ZymicWriter::new(
+        FailAfterHeader {
+            header_written: false,
+        },
+        &mock_parent_key(),
+        TEST_NONCE,
+    )
+    .unwrap();
+
+    let error = writer.finish().unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Io(_)));
+
+    let error = writer.finish().unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::StreamFailed));
+
+    let error = writer.write(&[1]).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+
+    let error = writer.flush().unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+}
+
+#[cfg(feature = "std")]
+#[test]
+fn writer_finish_flush_failure_disables_further_io() {
+    struct FailFlush;
+
+    impl Write for FailFlush {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> std::io::Result<()> {
+            Err(std::io::Error::other("End Frame flush failed"))
+        }
+    }
+
+    let mut writer = ZymicWriter::new(FailFlush, &mock_parent_key(), TEST_NONCE).unwrap();
+
+    let error = writer.finish().unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::Io(_)));
+
+    let error = writer.finish().unwrap_err();
+    assert!(matches!(error.kind(), ErrorKind::StreamFailed));
+
+    let error = writer.write(&[1]).unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
+
+    let error = writer.flush().unwrap_err();
+    let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
 }
 
 #[cfg(feature = "std")]
@@ -1803,5 +1948,5 @@ fn writer_panic_disables_further_writes() {
 
     let error = writer.write(&[1]).unwrap_err();
     let inner = error.get_ref().unwrap().downcast_ref::<Error>().unwrap();
-    assert!(matches!(inner.kind(), ErrorKind::StreamImmutable));
+    assert!(matches!(inner.kind(), ErrorKind::StreamFailed));
 }

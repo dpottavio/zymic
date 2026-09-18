@@ -26,7 +26,9 @@ pub(crate) enum ErrorKind {
     Io(String),
     ParentKeyIdMismatch,
     #[cfg(feature = "std")]
-    StreamImmutable,
+    StreamFailed,
+    #[cfg(feature = "std")]
+    StreamFinished,
     #[cfg(feature = "std")]
     Truncation,
     TryFromInt(core::num::TryFromIntError),
@@ -65,7 +67,9 @@ impl fmt::Display for Error {
                 "parent key ID does not match the parent key ID found in the header"
             ),
             #[cfg(feature = "std")]
-            ErrorKind::StreamImmutable => write!(f, "stream is immutable"),
+            ErrorKind::StreamFailed => write!(f, "stream has failed"),
+            #[cfg(feature = "std")]
+            ErrorKind::StreamFinished => write!(f, "writing to a finished stream"),
             #[cfg(feature = "std")]
             ErrorKind::Truncation => write!(f, "data has been truncated"),
             ErrorKind::TryFromInt(e) => write!(f, "integer conversion failure: {e}"),
