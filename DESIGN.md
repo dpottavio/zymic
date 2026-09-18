@@ -690,12 +690,8 @@ parallelism (P), and iteration count (T) as follows:
 |---------------|------|---|---|-------------------------|
 |   1           | 2^16 | 4 | 3 | CPU-intensive           |
 |   2           | 2^18 | 4 | 1 | Memory-intensive        |
-|   3           |  8   | 1 | 1 | Insecure (for testing)  |
 
 Key File decoders MUST reject any other Setting Value.
-
-Note: Setting 3 is for development or testing only and MUST NOT be
-used in production environments.
 
 ### wrapped_secret
 
