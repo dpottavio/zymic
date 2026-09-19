@@ -191,10 +191,6 @@ Options:
 
           - mem: Memory intensive Argon2 configuration.
 
-          - min: This setting uses the least amount of resources.
-            It is the least secure but most performant setting.
-            This should only be used for testing purposes.
-
   -h, --help
           Print help (see a summary with '-h')
 ```
