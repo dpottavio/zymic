@@ -24,11 +24,6 @@ type WrappedSecret = ByteArray<{ ParentKeySecret::LEN + 8 }>;
 
 type ArgonHash = ByteArray<32>;
 
-/// Argon minimum parameter settings
-const ARGON_MIN_M: u32 = 8;
-const ARGON_MIN_P: u32 = 1;
-const ARGON_MIN_T: u32 = 1;
-
 /// Argon cpu focused parameter settings
 const ARGON_CPU_M: u32 = 1 << 16;
 const ARGON_CPU_P: u32 = 4;
@@ -59,12 +54,6 @@ pub enum ArgonSetting {
     ///
     /// m = 2^18, p = 4, t = 1
     Mem = 2,
-    /// Minimal Argon2id parameters for development and testing only.
-    ///
-    /// This preset is insecure and MUST NOT be used in production.
-    ///
-    /// m = 8, p = 1, t = 1
-    Min = 3,
 }
 
 /// A container for safely storing symmetric encryption keys to
@@ -136,12 +125,6 @@ impl ArgonSetting {
         // unwrap safety: These values are const and checked via unit
         // tests. Therefore, safe to unwrap.
         match self {
-            Self::Min => argon2::ParamsBuilder::new()
-                .m_cost(ARGON_MIN_M)
-                .p_cost(ARGON_MIN_P)
-                .t_cost(ARGON_MIN_T)
-                .build()
-                .unwrap(),
             Self::Cpu => argon2::ParamsBuilder::new()
                 .m_cost(ARGON_CPU_M)
                 .p_cost(ARGON_CPU_P)
@@ -161,7 +144,6 @@ impl ArgonSetting {
 impl fmt::Display for ArgonSetting {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Min => write!(f, "min"),
             Self::Cpu => write!(f, "cpu"),
             Self::Mem => write!(f, "mem"),
         }
@@ -299,7 +281,7 @@ mod serde_base64 {
 mod tests {
     use super::{
         ArgonSetting, KeyFile, ARGON_CPU_M, ARGON_CPU_P, ARGON_CPU_T, ARGON_MEM_M, ARGON_MEM_P,
-        ARGON_MEM_T, ARGON_MIN_M, ARGON_MIN_P, ARGON_MIN_T,
+        ARGON_MEM_T,
     };
     use zymic_core::key::{ParentKeyId, ParentKeySecret};
 
@@ -308,7 +290,7 @@ mod tests {
         let password = "foo";
         let id = ParentKeyId::default();
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
-        let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
+        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
         let _ = key_file.unwrap(password).unwrap();
     }
 
@@ -318,7 +300,7 @@ mod tests {
         let bad_password = "bar";
         let id = ParentKeyId::default();
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
-        let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
+        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
         let result = key_file.unwrap(bad_password);
         assert!(result.is_err())
     }
@@ -328,7 +310,7 @@ mod tests {
         let password = "foo";
         let id = ParentKeyId::default();
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
-        let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
+        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
         let mut json = serde_json::to_value(key_file).unwrap();
         json["date"] = serde_json::Value::Number(serde_json::value::Number::from(12345));
         let key_bad: KeyFile = serde_json::from_str(&json.to_string()).unwrap();
@@ -341,7 +323,7 @@ mod tests {
         let password = "foo";
         let id = ParentKeyId::default();
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
-        let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
+        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
         let mut json = serde_json::to_value(key_file).unwrap();
         json["id"] = serde_json::Value::String("MDAwMDAwMDAwMDAwMDAwCg==".to_string());
         let key_bad: KeyFile = serde_json::from_str(&json.to_string()).unwrap();
@@ -354,7 +336,7 @@ mod tests {
         let password = "foo";
         let id = ParentKeyId::default();
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
-        let key_file = KeyFile::new(id, &secret, ArgonSetting::Min, password).unwrap();
+        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
         let blob = postcard::to_stdvec(&key_file).unwrap();
         let result: Result<KeyFile, _> = postcard::from_bytes(&blob);
         assert!(result.is_ok());
@@ -369,12 +351,6 @@ mod tests {
         assert_eq!(ARGON_CPU_M, params.m_cost());
         assert_eq!(ARGON_CPU_P, params.p_cost());
         assert_eq!(ARGON_CPU_T, params.t_cost());
-
-        let setting = ArgonSetting::Min;
-        let params = setting.to_params();
-        assert_eq!(ARGON_MIN_M, params.m_cost());
-        assert_eq!(ARGON_MIN_P, params.p_cost());
-        assert_eq!(ARGON_MIN_T, params.t_cost());
 
         let setting = ArgonSetting::Mem;
         let params = setting.to_params();

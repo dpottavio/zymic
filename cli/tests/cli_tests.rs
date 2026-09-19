@@ -14,7 +14,7 @@ mod cli_integ_tests {
     };
 
     /// Timeout for cli spawned sessions in MS.
-    const SESSION_TIMEOUT_MS: u64 = 5_000;
+    const SESSION_TIMEOUT_MS: u64 = 10_000;
 
     static NEXT_FILE_ID: AtomicU32 = AtomicU32::new(0);
 
@@ -64,7 +64,7 @@ mod cli_integ_tests {
         let mut path = PathBuf::from(&working_dir);
         path.push("key");
 
-        let cmd = format!("{} key new -k {} -a min", CLI_PATH, path.display());
+        let cmd = format!("{} key new -k {}", CLI_PATH, path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session.exp_string("enter key password:").unwrap();

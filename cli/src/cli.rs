@@ -140,12 +140,6 @@ enum ArgonArg {
     Cpu,
     #[value(help = "Memory intensive Argon2 configuration.\n")]
     Mem,
-    #[value(help = indoc! {r#"
-This setting uses the least amount of resources.
-It is the least secure but most performant setting.
-This should only be used for testing purposes.
-"#})]
-    Min,
 }
 
 #[derive(Args)]
@@ -226,7 +220,6 @@ impl fmt::Display for ArgonArg {
         match self {
             Self::Cpu => write!(f, "cpu"),
             Self::Mem => write!(f, "mem"),
-            Self::Min => write!(f, "min"),
         }
     }
 }
@@ -237,7 +230,6 @@ impl ArgonArg {
         match self {
             Self::Cpu => ArgonSetting::Cpu,
             Self::Mem => ArgonSetting::Mem,
-            Self::Min => ArgonSetting::Min,
         }
     }
 }
