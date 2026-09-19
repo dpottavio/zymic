@@ -44,6 +44,7 @@ pub type UnixTime = u64;
 
 /// Setting for configuring Argon2. Each setting value represents a
 /// valid Argon2 parameter tuple of `m`,`p`, and `t`.
+#[non_exhaustive]
 #[derive(Default, Serialize_repr, Deserialize_repr, Copy, Clone, Debug, PartialEq)]
 #[repr(u8)]
 pub enum ArgonSetting {
