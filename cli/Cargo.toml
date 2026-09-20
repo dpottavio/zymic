@@ -31,7 +31,6 @@ zymic_core = { path = "../core", version = "1.0", features = ["std", "serde", "v
 
 [dev-dependencies]
 rexpect = "0.7.0"
-postcard = {version = "1.0.0", features = ["use-std"]}
 
 [[bin]]
 name = "zymic"

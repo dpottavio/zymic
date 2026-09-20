@@ -108,19 +108,25 @@ Examples:
 
 - Create a new key file in /tmp
   zymic key new -k /tmp/my_key
+
+- Create a key file without password protection
+  zymic key new --no-password
 "#})]
     New(NewKeyFileArgs),
     /// Display key file metadata information.
     Info(KeyInfoArgs),
-    /// Change password for a key file.
-    Password(KeyFileArgs),
+    /// Add, change, or remove password protection for a key file.
+    Password(PasswordArgs),
 }
 
 #[derive(Args)]
-struct KeyFileArgs {
+struct PasswordArgs {
     /// Key file path (defaults to ${HOME}/.zymic/zymic_key.json)
     #[arg(short, long)]
     key: Option<PathBuf>,
+    /// Remove password protection
+    #[arg(long)]
+    no_password: bool,
 }
 
 #[derive(Args)]
@@ -147,6 +153,9 @@ struct NewKeyFileArgs {
     /// new key file path (defaults to ${HOME}/.zymic/zymic_key.json)
     #[arg(short, long)]
     key: Option<PathBuf>,
+    /// Store the key without password protection
+    #[arg(long)]
+    no_password: bool,
     #[arg(short, long, help = indoc! {r#"
 Argon2 hash parameter setting. This argument tunes the
 resources required to compute the Argon2 hash from the
@@ -154,6 +163,7 @@ user-provided password. It's a proof of work step to
 limit the ability of an attacker to mine the user's key
 password.
 "#},
+    conflicts_with = "no_password",
     default_value_t = ArgonArg::Cpu)]
     argon_config: ArgonArg,
 }
@@ -195,7 +205,7 @@ struct EncArgs {
 struct InfoArgs {
     /// Encrypted file to inspect
     file: PathBuf,
-    /// Authenticate the header (password required)
+    /// Authenticate the header
     #[arg(short, long)]
     auth: bool,
     /// Key file path (only used with --auth)
@@ -270,6 +280,16 @@ fn resolve_key_path(path: Option<PathBuf>) -> Result<PathBuf, Error> {
         return Err(Error::new(ErrorKind::KeyNotFound));
     }
     Ok(key_path)
+}
+
+/// Read the parent key, prompting only when its key file is password protected.
+fn unwrap_key_file(key_file: &KeyFile) -> Result<ParentKey, Error> {
+    if key_file.is_password_protected() {
+        let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
+        key_file.unwrap(&password)
+    } else {
+        key_file.unwrap("")
+    }
 }
 
 /// Set the key file permissions. Currently only supports UNIX
@@ -526,17 +546,20 @@ pub fn handle_input() -> Result<(), Error> {
                 }
                 println!("creating key: {}", key_path.display());
 
-                let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
-                let password_chk =
-                    Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
-                if password != password_chk {
-                    return Err(Error::new(ErrorKind::PasswordMismatch));
-                }
                 let id = ParentKeyId::try_from_fill(getrandom::fill)?;
                 let secret = ParentKeySecret::try_from_fill(getrandom::fill)?;
 
-                let key_file =
-                    KeyFile::new(id, &secret, args.argon_config.to_setting(), &password)?;
+                let key_file = if args.no_password {
+                    KeyFile::new_unprotected(id, &secret)?
+                } else {
+                    let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
+                    let password_chk =
+                        Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
+                    if password != password_chk {
+                        return Err(Error::new(ErrorKind::PasswordMismatch));
+                    }
+                    KeyFile::new(id, &secret, args.argon_config.to_setting(), &password)?
+                };
 
                 if let Some(parent) = key_path.parent() {
                     fs::create_dir_all(parent)?;
@@ -550,8 +573,7 @@ pub fn handle_input() -> Result<(), Error> {
                 let file = fs::OpenOptions::new().read(true).open(&key_path)?;
                 let key: KeyFile = serde_json::from_reader(file)?;
                 if args.check {
-                    let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
-                    let _ = key.unwrap(&password)?;
+                    let _ = unwrap_key_file(&key)?;
                 }
                 println!("path:\t{}\n{key}", key_path.display());
             }
@@ -561,20 +583,35 @@ pub fn handle_input() -> Result<(), Error> {
 
                 let file = fs::OpenOptions::new().read(true).open(&key_path)?;
                 let mut key: KeyFile = serde_json::from_reader(file)?;
-                let old_password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
+                let old_password = if key.is_password_protected() {
+                    Some(Zeroizing::new(rpassword::prompt_password(
+                        KEY_PASSWORD_PROMPT,
+                    )?))
+                } else {
+                    None
+                };
 
-                let new_password =
-                    Zeroizing::new(rpassword::prompt_password(KEY_NEW_PASSWORD_PROMPT)?);
-                if new_password == old_password {
-                    return Err(Error::new(ErrorKind::PasswordNoChange));
+                let old_password = old_password
+                    .as_ref()
+                    .map_or("", |password| password.as_str());
+                if args.no_password {
+                    if !key.is_password_protected() {
+                        return Err(Error::new(ErrorKind::PasswordNoChange));
+                    }
+                    key.remove_password(old_password)?;
+                } else {
+                    let new_password =
+                        Zeroizing::new(rpassword::prompt_password(KEY_NEW_PASSWORD_PROMPT)?);
+                    if key.is_password_protected() && old_password == new_password.as_str() {
+                        return Err(Error::new(ErrorKind::PasswordNoChange));
+                    }
+                    let new_password_chk =
+                        Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
+                    if new_password != new_password_chk {
+                        return Err(Error::new(ErrorKind::PasswordMismatch));
+                    }
+                    key.rewrap(old_password, &new_password)?;
                 }
-                let new_password_chk =
-                    Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
-                if new_password != new_password_chk {
-                    return Err(Error::new(ErrorKind::PasswordMismatch));
-                }
-
-                key.rewrap(&old_password, &new_password)?;
                 atomic_replace(&key_path, |file| {
                     serde_json::to_writer(file, &key)?;
                     Ok(())
@@ -585,8 +622,7 @@ pub fn handle_input() -> Result<(), Error> {
             let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
             let file = fs::OpenOptions::new().read(true).open(&key_path)?;
             let key_file: KeyFile = serde_json::from_reader(file)?;
-            let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
-            let parent_key = key_file.unwrap(&password)?;
+            let parent_key = unwrap_key_file(&key_file)?;
 
             let io_args = enc_args_to_io(args.file, args.output, args.force)?;
             let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
@@ -609,8 +645,7 @@ pub fn handle_input() -> Result<(), Error> {
                 let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
                 let file = fs::OpenOptions::new().read(true).open(&key_path)?;
                 let key_file: KeyFile = serde_json::from_reader(file)?;
-                let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
-                let parent_key = key_file.unwrap(&password)?;
+                let parent_key = unwrap_key_file(&key_file)?;
                 Header::from_bytes(&parent_key, header_bytes.clone())?;
             }
             print_header_info(&header_bytes);
@@ -619,8 +654,7 @@ pub fn handle_input() -> Result<(), Error> {
             let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
             let file = fs::OpenOptions::new().read(true).open(&key_path)?;
             let key_file: KeyFile = serde_json::from_reader(file)?;
-            let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
-            let key = key_file.unwrap(&password)?;
+            let key = unwrap_key_file(&key_file)?;
 
             let mut io_args = dec_args_to_io(args.file, args.output, args.force)?;
             if args.v1 {
@@ -703,6 +737,21 @@ mod tests {
         };
         assert!(!args.auth);
         assert_eq!(args.key, None);
+    }
+
+    #[test]
+    fn no_password_argument() {
+        assert!(Cli::try_parse_from(["zymic", "key", "new", "--no-password"]).is_ok());
+        assert!(Cli::try_parse_from(["zymic", "key", "password", "--no-password"]).is_ok());
+        assert!(Cli::try_parse_from([
+            "zymic",
+            "key",
+            "new",
+            "--no-password",
+            "--argon-config",
+            "mem",
+        ])
+        .is_err());
     }
 
     #[test]

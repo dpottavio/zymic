@@ -5,7 +5,7 @@
 //! This module provides tools for creating and storing cryptographic
 //! keys to disk.
 use crate::error::Error;
-use aes_kw::{KeyInit, KwAes256};
+use aes_kw::{KeyInit, KwAes192, KwAes256};
 use argon2::Argon2;
 use chrono::{DateTime, SecondsFormat, Utc};
 use serde::{Deserialize, Serialize};
@@ -56,23 +56,20 @@ pub enum ArgonSetting {
     Mem = 2,
 }
 
-/// A container for safely storing symmetric encryption keys to
-/// disk. This is achieved by wrapping (i.e., encrypting) the key using
-/// the AES Key Wrap algorithm
-/// ([RFC-3394](https://datatracker.ietf.org/doc/html/rfc3394)). The
-/// key used to wrap the symmetric key is derived from a user password
-/// using the Argon2id hash algorithm
-/// ([RFC-9106](https://datatracker.ietf.org/doc/html/rfc9106)).
+/// A container for storing symmetric encryption keys on disk.
 ///
-/// Only a wrapped version of the symmetric key may be serialized. To
-/// use the key for encryption or decryption, it must first be unwrapped
-/// with the user password.
+/// Keys may be protected by wrapping the secret using AES Key Wrap
+/// ([RFC-3394](https://datatracker.ietf.org/doc/html/rfc3394)) and a
+/// password-derived key. Without password protection, the public Parent Key ID
+/// and creation date form an AES-192 wrapping key to retain AES Key Wrap's
+/// corruption check.
 #[derive(Serialize, Deserialize)]
 pub struct KeyFile {
     #[serde(with = "serde_base64")]
     id: ParentKeyId,
     date: UnixTime,
-    argon: ArgonSetting,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    argon: Option<ArgonSetting>,
     #[serde(with = "serde_base64")]
     wrapped_secret: WrappedSecret,
 }
@@ -113,7 +110,13 @@ impl fmt::Display for KeyFile {
                 d.to_rfc3339_opts(SecondsFormat::Secs, true)
             });
         writeln!(f, "date:\t{}", date)?;
-        write!(f, "argon:\t{}", self.argon)?;
+        match self.argon {
+            Some(argon) => {
+                writeln!(f, "protection:\tpassword")?;
+                write!(f, "argon:\t{argon}")?;
+            }
+            None => write!(f, "protection:\tnone")?,
+        }
 
         Ok(())
     }
@@ -172,7 +175,21 @@ impl KeyFile {
         Ok(Self {
             id,
             date,
-            argon,
+            argon: Some(argon),
+            wrapped_secret,
+        })
+    }
+
+    /// Create a new key file without password protection.
+    pub fn new_unprotected(id: ParentKeyId, secret: &ParentKeySecret) -> Result<Self, Error> {
+        let date = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)?
+            .as_secs();
+        let wrapped_secret = Self::wrap_unprotected_secret(&id, date, secret)?;
+        Ok(Self {
+            id,
+            date,
+            argon: None,
             wrapped_secret,
         })
     }
@@ -182,26 +199,44 @@ impl KeyFile {
         self.date
     }
 
-    /// Return a copy of the key unwrapped. Caller must provide a
-    /// 'password' to unwrap the key.
-    pub fn unwrap(&self, password: &str) -> Result<ParentKey, Error> {
-        let mut hash = argon_hash(self.argon, &self.id, self.date, password)?;
-        let kek = KwAes256::new(hash.as_array().into());
-        hash.zeroize();
-        let mut bytes = Zeroizing::new([0u8; ParentKeySecret::LEN]);
-        kek.unwrap_key(&self.wrapped_secret, bytes.as_mut())?;
+    /// Return whether this key requires a password.
+    pub fn is_password_protected(&self) -> bool {
+        self.argon.is_some()
+    }
 
-        Ok(ParentKey::new(
-            self.id.clone(),
-            ParentKeySecret::from_array(*bytes),
-        ))
+    /// Return a copy of the key unwrapped. Caller must provide a
+    /// `password` to unwrap a password-protected key.
+    pub fn unwrap(&self, password: &str) -> Result<ParentKey, Error> {
+        let secret = match self.argon {
+            Some(argon) => {
+                let mut hash = argon_hash(argon, &self.id, self.date, password)?;
+                let kek = KwAes256::new(hash.as_array().into());
+                hash.zeroize();
+                let mut bytes = Zeroizing::new([0u8; ParentKeySecret::LEN]);
+                kek.unwrap_key(&self.wrapped_secret, bytes.as_mut())?;
+                ParentKeySecret::from_array(*bytes)
+            }
+            None => Self::unwrap_unprotected_secret(&self.id, self.date, &self.wrapped_secret)?,
+        };
+
+        Ok(ParentKey::new(self.id.clone(), secret))
     }
 
     /// Rewrap this instance with a new password.
     pub fn rewrap(&mut self, old_password: &str, new_password: &str) -> Result<(), Error> {
+        let argon = self.argon.unwrap_or_default();
         let key = self.unwrap(old_password)?;
         self.wrapped_secret =
-            Self::wrap_secret(&self.id, self.date, self.argon, new_password, key.secret())?;
+            Self::wrap_secret(&self.id, self.date, argon, new_password, key.secret())?;
+        self.argon = Some(argon);
+        Ok(())
+    }
+
+    /// Remove password protection from this instance.
+    pub fn remove_password(&mut self, old_password: &str) -> Result<(), Error> {
+        let key = self.unwrap(old_password)?;
+        self.wrapped_secret = Self::wrap_unprotected_secret(&self.id, self.date, key.secret())?;
+        self.argon = None;
         Ok(())
     }
 
@@ -221,56 +256,77 @@ impl KeyFile {
 
         Ok(WrappedSecret::from_array(*bytes))
     }
+
+    /// Wrap a secret without password protection. The Parent Key ID and date
+    /// are public, so this provides corruption detection but no confidentiality
+    /// or authentication against an attacker who can modify the key file.
+    fn wrap_unprotected_secret(
+        id: &ParentKeyId,
+        date: UnixTime,
+        secret: &ParentKeySecret,
+    ) -> Result<WrappedSecret, Error> {
+        let mut key = [0u8; 24];
+        key[..ParentKeyId::LEN].copy_from_slice(id);
+        key[ParentKeyId::LEN..].copy_from_slice(&date.to_le_bytes());
+        let kek = KwAes192::new((&key).into());
+        let mut bytes = Zeroizing::new([0u8; WrappedSecret::LEN]);
+        kek.wrap_key(secret.as_bytes(), bytes.as_mut())?;
+
+        Ok(WrappedSecret::from_array(*bytes))
+    }
+
+    /// Unwrap a secret without password protection using the public Parent Key
+    /// ID and date as the AES-192 wrapping key. Unwrapping verifies AES Key
+    /// Wrap's corruption check.
+    fn unwrap_unprotected_secret(
+        id: &ParentKeyId,
+        date: UnixTime,
+        wrapped_secret: &WrappedSecret,
+    ) -> Result<ParentKeySecret, Error> {
+        let mut key = [0u8; 24];
+        key[..ParentKeyId::LEN].copy_from_slice(id);
+        key[ParentKeyId::LEN..].copy_from_slice(&date.to_le_bytes());
+        let kek = KwAes192::new((&key).into());
+        let mut bytes = Zeroizing::new([0u8; ParentKeySecret::LEN]);
+        kek.unwrap_key(wrapped_secret, bytes.as_mut())?;
+
+        Ok(ParentKeySecret::from_array(*bytes))
+    }
 }
 
 mod serde_base64 {
-    //! Encode/Decode into base64 format if the
-    //! serializer/deserializer is human readable.
+    //! Encode and decode fixed-size byte arrays as JSON Base64 strings.
     use base64::{engine::general_purpose as b64, Engine as _};
     use serde::{de, Deserialize, Serializer};
     use zymic_core::bytes::ByteArray;
 
-    pub fn serialize<const N: usize, S>(
+    pub(super) fn serialize<const N: usize, S>(
         data: &ByteArray<N>,
         serializer: S,
     ) -> Result<S::Ok, S::Error>
     where
         S: Serializer,
     {
-        if serializer.is_human_readable() {
-            let b64 = b64::STANDARD.encode(data);
-            serializer.serialize_str(&b64)
-        } else {
-            serializer.serialize_bytes(data)
-        }
+        let b64 = b64::STANDARD.encode(data);
+        serializer.serialize_str(&b64)
     }
 
-    pub fn deserialize<'de, const N: usize, D>(deserializer: D) -> Result<ByteArray<N>, D::Error>
+    pub(super) fn deserialize<'de, const N: usize, D>(
+        deserializer: D,
+    ) -> Result<ByteArray<N>, D::Error>
     where
         D: serde::Deserializer<'de>,
     {
         let mut bytes = ByteArray::<N>::default();
-        if deserializer.is_human_readable() {
-            let encoded: String = Deserialize::deserialize(deserializer)?;
-            let len = b64::STANDARD
-                .decode_slice(encoded, &mut bytes)
-                .map_err(|e| de::Error::custom(format!("base64 decoding error: {}", e)))?;
-            if len != N {
-                return Err(de::Error::custom(format!(
-                    "base64 decoding error: expecting array length of {} but received {}",
-                    N, len
-                )));
-            }
-        } else {
-            let data: &[u8] = Deserialize::deserialize(deserializer)?;
-            if data.len() != N {
-                return Err(de::Error::custom(format!(
-                    "decoding error: expecting array length of {} but received {}",
-                    N,
-                    data.len()
-                )));
-            }
-            bytes.copy_from_slice(data);
+        let encoded: String = Deserialize::deserialize(deserializer)?;
+        let len = b64::STANDARD
+            .decode_slice(encoded, &mut bytes)
+            .map_err(|e| de::Error::custom(format!("base64 decoding error: {}", e)))?;
+        if len != N {
+            return Err(de::Error::custom(format!(
+                "base64 decoding error: expecting array length of {} but received {}",
+                N, len
+            )));
         }
 
         Ok(bytes)
@@ -292,6 +348,11 @@ mod tests {
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
         let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
         let _ = key_file.unwrap(password).unwrap();
+
+        let json = serde_json::to_value(key_file).unwrap();
+        assert!(json.get("argon").is_some());
+        assert!(json.get("wrapped_secret").is_some());
+        assert!(json.get("secret").is_none());
     }
 
     #[test]
@@ -332,14 +393,113 @@ mod tests {
     }
 
     #[test]
-    fn serde_non_human_readable() {
-        let password = "foo";
+    fn unprotected_key() {
+        let id = ParentKeyId::default();
+        let secret = ParentKeySecret::from_array([7u8; ParentKeySecret::LEN]);
+        let key_file = KeyFile::new_unprotected(id, &secret).unwrap();
+
+        assert!(!key_file.is_password_protected());
+        let key = key_file.unwrap("").unwrap();
+        assert_eq!(key.secret().as_bytes(), secret.as_bytes());
+
+        let json = serde_json::to_value(&key_file).unwrap();
+        assert!(json.get("secret").is_none());
+        assert!(json.get("argon").is_none());
+        assert!(json.get("wrapped_secret").is_some());
+
+        let decoded: KeyFile = serde_json::from_value(json).unwrap();
+        assert!(!decoded.is_password_protected());
+    }
+
+    #[test]
+    fn unprotected_key_rejects_corruption() {
         let id = ParentKeyId::default();
         let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
-        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, password).unwrap();
-        let blob = postcard::to_stdvec(&key_file).unwrap();
-        let result: Result<KeyFile, _> = postcard::from_bytes(&blob);
-        assert!(result.is_ok());
+        let mut key_file = KeyFile::new_unprotected(id, &secret).unwrap();
+
+        key_file.wrapped_secret[0] ^= 1;
+        assert!(key_file.unwrap("").is_err());
+
+        let mut key_file = KeyFile::new_unprotected(ParentKeyId::default(), &secret).unwrap();
+        key_file.id[0] ^= 1;
+        assert!(key_file.unwrap("").is_err());
+
+        let mut key_file = KeyFile::new_unprotected(ParentKeyId::default(), &secret).unwrap();
+        key_file.date ^= 1;
+        assert!(key_file.unwrap("").is_err());
+    }
+
+    #[test]
+    fn key_file_accepts_unknown_fields() {
+        let id = ParentKeyId::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
+
+        let key_file = KeyFile::new(id.clone(), &secret, ArgonSetting::Cpu, "foo").unwrap();
+        let mut json = serde_json::to_value(key_file).unwrap();
+        json["future"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<KeyFile>(json).is_ok());
+
+        let key_file = KeyFile::new_unprotected(id, &secret).unwrap();
+        let mut json = serde_json::to_value(key_file).unwrap();
+        json["future"] = serde_json::Value::Bool(true);
+        assert!(serde_json::from_value::<KeyFile>(json).is_ok());
+    }
+
+    #[test]
+    fn key_file_rejects_missing_material() {
+        let id = ParentKeyId::default();
+        let secret = ParentKeySecret::from_array([0u8; ParentKeySecret::LEN]);
+
+        let key_file = KeyFile::new_unprotected(id.clone(), &secret).unwrap();
+        let mut json = serde_json::to_value(key_file).unwrap();
+        json.as_object_mut().unwrap().remove("wrapped_secret");
+        assert!(serde_json::from_value::<KeyFile>(json).is_err());
+
+        let key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, "foo").unwrap();
+        let mut json = serde_json::to_value(key_file).unwrap();
+        json.as_object_mut().unwrap().remove("wrapped_secret");
+        assert!(serde_json::from_value::<KeyFile>(json).is_err());
+    }
+
+    #[test]
+    fn rewrap_password_protection() {
+        let id = ParentKeyId::default();
+        let secret = ParentKeySecret::from_array([7u8; ParentKeySecret::LEN]);
+        let mut key_file = KeyFile::new_unprotected(id, &secret).unwrap();
+
+        key_file.rewrap("", "foo").unwrap();
+        assert!(key_file.is_password_protected());
+        assert!(key_file.unwrap("").is_err());
+        assert_eq!(
+            key_file.unwrap("foo").unwrap().secret().as_bytes(),
+            secret.as_bytes()
+        );
+
+        key_file.remove_password("foo").unwrap();
+        assert!(!key_file.is_password_protected());
+        assert_eq!(
+            key_file.unwrap("").unwrap().secret().as_bytes(),
+            secret.as_bytes()
+        );
+    }
+
+    #[test]
+    fn empty_password_remains_password_protected() {
+        let id = ParentKeyId::default();
+        let secret = ParentKeySecret::from_array([7u8; ParentKeySecret::LEN]);
+        let mut key_file = KeyFile::new(id, &secret, ArgonSetting::Cpu, "").unwrap();
+
+        assert!(key_file.is_password_protected());
+        assert_eq!(
+            key_file.unwrap("").unwrap().secret().as_bytes(),
+            secret.as_bytes()
+        );
+
+        key_file.rewrap("", "").unwrap();
+        assert!(key_file.is_password_protected());
+
+        key_file.remove_password("").unwrap();
+        assert!(!key_file.is_password_protected());
     }
 
     #[test]

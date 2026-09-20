@@ -351,8 +351,6 @@ two fields:
     * It MUST be generated using a CSPRNG or derived using a KDF that
     produces pseudorandom cryptographic keys.
 
-    * It MUST NOT be transmitted or persistently stored in plaintext.
-
 The ID and Secret MUST be managed as an inseparable Parent Key. Zymic
 cryptographically binds them during Data Key derivation. Both fields
 MUST be provided by the Stream user or system. This specification does
@@ -654,13 +652,14 @@ Steps:
 ## Example Parent Key Specification
 
 This section defines an example JSON-based format for serializing
-Parent Keys to disk. The format uses a user-supplied password and the
+Parent Keys to disk. A Key File wraps the Parent Key secret with or
+without password protection. Password-protected Key Files use the
 Argon2id key derivation function (per
-[RFC-9106](https://www.rfc-editor.org/rfc/rfc9106.html)) to protect
-the key material via the AES Key Wrap algorithm
+[RFC-9106](https://www.rfc-editor.org/rfc/rfc9106.html)) and the AES
+Key Wrap algorithm
 ([RFC-3394](https://www.rfc-editor.org/rfc/rfc3394.html)).
 
-The Key File is stored as JSON with the following fields:
+The password-protected form is stored as:
 
 ```
 {
@@ -671,20 +670,43 @@ The Key File is stored as JSON with the following fields:
 }
 ```
 
+The unprotected form is stored as:
+
+```
+{
+  "id": "<Base64>",
+  "date": <UNIX timestamp>,
+  "wrapped_secret": "<Base64>"
+}
+```
+
+A Key File MUST contain wrapped_secret. If argon is absent or null,
+the Key File is unprotected. Otherwise, argon MUST be a supported
+integer preset identifier and the Key File is password
+protected. Decoders MUST reject all other values.
+
+Decoders SHOULD ignore fields they do not recognize so that additive
+format changes remain compatible with older versions.
+
 ### id
+
 The Parent Key ID, encoded using the standard Base64 alphabet with
 padding. The decoded value MUST be exactly 16 bytes. This public
 identifier associates Streams with the correct Parent Key.
 
 ### date
+
 A UNIX timestamp (in seconds) indicating when the key file was
 created. It is stored in JSON as a number.
 
 ### argon
-An integer preset identifier representing the Argon2id
-configuration. Argon2id with version parameter `v = 0x13` MUST be used
-with a 32-byte output. The presets map to the memory in KiB (M),
-parallelism (P), and iteration count (T) as follows:
+
+When non-null, this field identifies the Argon2id configuration used
+for password protection. This is an integer preset identifier
+representing the Argon2id configuration. Argon2id with version
+parameter `v = 0x13` MUST be used with a 32-byte output.  The presets
+map to the memory in KiB (M), parallelism (P), and iteration count (T)
+as follows:
 
 | Setting Value |  M   | P | T |       Description       |
 |---------------|------|---|---|-------------------------|
@@ -697,44 +719,41 @@ Key File decoders MUST reject any other Setting Value.
 
 The wrapped Parent Key secret, encoded using the standard Base64
 alphabet with padding. The decoded value MUST be exactly 40 bytes: the
-32-byte Parent Key secret wrapped using AES Key Wrap. The wrapping key
-is derived from the UTF-8 encoding of the user's password using
-Argon2id with a salt composed of the decoded `id` and serialized `date`
-fields.
+32-byte Parent Key secret wrapped using AES Key Wrap.
 
-To wrap the secret field:
+For password-protected Key Files, the wrapping key is derived from the
+UTF-8 encoding of the user's password using Argon2id with a salt
+composed of the decoded `id` and serialized `date` fields. AES-256 Key
+Wrap is used. For Key Files without password protection, the decoded
+16-byte Parent Key ID is concatenated with the little-endian 8-byte
+creation date to form an AES-192 wrapping key. This provides detection
+of accidental corruption to the ID, date, or wrapped secret, but
+provides no confidentiality or authentication against someone who can
+read or modify the Key File.
+
+Wrap the Parent Key secret as follows:
 
 ```
-# Construct the salt from the decoded ID and little-endian date.
-salt = id_bytes || little_endian_u64(date)
-
-# Derive a 32-byte wrapping key using the selected Argon2id preset.
-key_wrap_key = argon2id(utf8(password), salt, output_length = 32)
-
 # Generate 32 bytes for the secret using a CSPRNG.
 secret = crypto_rand_32_bytes()
+
+if password_protected:
+    salt = id_bytes || little_endian_u64(date)
+    key_wrap_key = argon2id(utf8(password), salt, output_length = 32)
+    wrapped_secret = aes256_wrap(key_wrap_key, secret)
+else:
+    key_wrap_key = id_bytes || little_endian_u64(date)
+    wrapped_secret = aes192_wrap(key_wrap_key, secret)
 ```
 
-Wrap the secret using AES-256 Key Wrap
-([RFC-3394](https://www.rfc-editor.org/rfc/rfc3394.html)):
+To unwrap the secret:
 
 ```
-wrapped_secret = aes256_wrap(key_wrap_key, secret)
-```
-
-To unwrap the secret field:
-
-```
-# Construct the salt from the decoded ID and little-endian date.
-salt = id_bytes || little_endian_u64(date)
-
-# Derive a 32-byte wrapping key using the selected Argon2id preset.
-key_wrap_key = argon2id(utf8(password), salt, output_length = 32)
-```
-
-Unwrap the secret using AES-256 Key Wrap
-([RFC-3394](https://www.rfc-editor.org/rfc/rfc3394.html)):
-
-```
-secret = aes256_unwrap(key_wrap_key, wrapped_secret)
+if password_protected:
+    salt = id_bytes || little_endian_u64(date)
+    key_wrap_key = argon2id(utf8(password), salt, output_length = 32)
+    secret = aes256_unwrap(key_wrap_key, wrapped_secret)
+else:
+    key_wrap_key = id_bytes || little_endian_u64(date)
+    secret = aes192_unwrap(key_wrap_key, wrapped_secret)
 ```

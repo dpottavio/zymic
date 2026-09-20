@@ -13,9 +13,9 @@
 
 Encrypt and decrypt files using the Zymic format.
 
-`zymic` is a command-line tool for encrypting data with a
-password-protected key file. Each stream is encrypted with a unique
-one-time key, and decryption verifies integrity to detect any
+`zymic` is a command-line tool for encrypting data with a key file that
+may optionally be password protected. Each stream is encrypted with a
+unique one-time key, and decryption verifies integrity to detect any
 tampering, truncation, or reordering.
 
 `zymic` functions as a stream filter: it can operate on individual
@@ -74,8 +74,11 @@ PREFIX="$HOME/.local" ./install.sh
 ## 🚀 Quick start
 
 ```bash
-# Create a key (prompts for a new password)
+# Create a password-protected key
 zymic key new # creates ~/.zymic/zymic_key.json by default
+
+# Create an unprotected key without prompting
+zymic key new --no-password
 
 # Encrypt a file
 zymic enc foo.txt
@@ -161,7 +164,7 @@ Arguments:
   <FILE>  Encrypted file to inspect
 
 Options:
-  -a, --auth       Authenticate the header (password required)
+  -a, --auth       Authenticate the header
   -k, --key <KEY>  Key file path (only used with --auth)
   -h, --help       Print help
 ```
@@ -177,6 +180,9 @@ Options:
   -k, --key <KEY>
           new key file path (defaults to ${HOME}/.zymic/zymic_key.json)
 
+      --no-password
+          Store the key without password protection
+
   -a, --argon-config <ARGON_CONFIG>
           Argon2 hash parameter setting. This argument tunes the
           resources required to compute the Argon2 hash from the
@@ -184,12 +190,12 @@ Options:
           limit the ability of an attacker to mine the user's
           key password.
 
-          [default: cpu]
-
           Possible values:
           - cpu: CPU intensive Argon2 configuration.
 
           - mem: Memory intensive Argon2 configuration.
+
+          [default: cpu]
 
   -h, --help
           Print help (see a summary with '-h')
@@ -204,19 +210,22 @@ Usage: zymic key info [OPTIONS]
 
 Options:
   -k, --key <KEY>  Key file path (defaults to ${HOME}/.zymic/zymic_key.json)
-  -c, --check      Perform an authentication check. (password required)
+  -c, --check      Verify that the key material can be read
   -h, --help       Print help
 ```
 
 #### `key password`
 
-Change password for a key file.
+Add, change, or remove password protection for a key file.
+
+Pass `--no-password` to remove password protection.
 
 ```
 Usage: zymic key password [OPTIONS]
 
 Options:
   -k, --key <KEY>  Key file path (defaults to ${HOME}/.zymic/zymic_key.json)
+      --no-password  Remove password protection
   -h, --help       Print help
 ```
 
@@ -241,10 +250,15 @@ Linux/macOS) or `%USERPROFILE%\.zymic` (on Windows).
 
 ## 🔑 Key File
 
-`zymic` uses a password-protected key file to encrypt and decrypt
-data. The key file contains a Parent Key, from which a unique,
-one-time Data Key is derived for each stream.  The Data Key is then
-used to encrypt the input file.
+`zymic` uses a key file to encrypt and decrypt data. The key file
+contains a Parent Key, from which a unique, one-time Data Key is
+derived for each stream. The Data Key is then used to encrypt the
+input file. Key files are password protected by default; pass
+`--no-password` to create an unprotected key.
+
+Anyone who can read an unprotected key file can decrypt all data
+encrypted with it. Keep key files restricted to their owning account
+and protect any copies and backups.
 
 The key file is required for decryption.  If the key file is lost, any
 data encrypted with it is permanently unrecoverable.

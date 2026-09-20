@@ -59,13 +59,31 @@ mod cli_integ_tests {
         path
     }
 
-    /// Create a new key using the CLI.
+    /// Create an unprotected key using the CLI.
     fn cli_new_key(working_dir: &Path) -> PathBuf {
         let mut path = PathBuf::from(&working_dir);
         path.push("key");
 
-        let cmd = format!("{} key new -k {}", CLI_PATH, path.display());
+        let cmd = format!("{} key new --no-password -k {}", CLI_PATH, path.display());
 
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+        path
+    }
+
+    /// Create a password-protected key using the selected Argon2 setting.
+    fn cli_new_password_key(working_dir: &Path, argon: &str) -> PathBuf {
+        let mut path = PathBuf::from(&working_dir);
+        path.push("key");
+
+        let cmd = format!(
+            "{} key new -k {} --argon-config {}",
+            CLI_PATH,
+            path.display(),
+            argon
+        );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session.exp_string("enter key password:").unwrap();
         session.send_line(DEFAULT_PASSWORD).unwrap();
@@ -92,8 +110,6 @@ mod cli_integ_tests {
         );
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -114,8 +130,6 @@ mod cli_integ_tests {
         );
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -138,8 +152,6 @@ mod cli_integ_tests {
         );
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -243,8 +255,6 @@ mod cli_integ_tests {
         let mut command = Command::new("sh");
         command.arg("-lc").arg(cmd);
         let mut session = spawn_command(command, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -268,8 +278,6 @@ mod cli_integ_tests {
             ciphertxt_path.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -289,8 +297,6 @@ mod cli_integ_tests {
             ciphertxt_path.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -309,8 +315,6 @@ mod cli_integ_tests {
             ciphertxt_path.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -321,8 +325,6 @@ mod cli_integ_tests {
         let cmd = format!("{} key password -k {}", CLI_PATH, key_path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_string("enter new key password:").unwrap();
         session.send_line(password).unwrap();
         session.exp_string("re-enter key password:").unwrap();
@@ -361,6 +363,54 @@ mod cli_integ_tests {
     fn new_key() {
         let tmp_dir = TmpDir::new("new_key");
         let _ = cli_new_key(&tmp_dir.path);
+    }
+
+    /// Test that an empty interactive password remains password protected.
+    #[test]
+    fn new_key_empty_password() {
+        let tmp_dir = TmpDir::new("new_key_empty_password");
+        let key_path = tmp_dir.path.join("key");
+        let cmd = format!("{} key new -k {}", CLI_PATH, key_path.display());
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter key password:").unwrap();
+        session.send_line("").unwrap();
+        session.exp_string("re-enter key password:").unwrap();
+        session.send_line("").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+
+        let json: serde_json::Value =
+            serde_json::from_reader(fs::File::open(key_path).unwrap()).unwrap();
+        assert!(json.get("argon").is_some());
+        assert!(json.get("wrapped_secret").is_some());
+    }
+
+    /// Test the CPU-intensive password protection setting.
+    #[test]
+    fn new_key_argon_cpu() {
+        let tmp_dir = TmpDir::new("new_key_argon_cpu");
+        let key_path = cli_new_password_key(&tmp_dir.path, "cpu");
+        let cmd = format!("{} key info -k {}", CLI_PATH, key_path.display());
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("protection:\tpassword").unwrap();
+        session.exp_string("argon:\tcpu").unwrap();
+        session.exp_eof().unwrap();
+    }
+
+    /// Test the memory-intensive password protection setting.
+    #[test]
+    fn new_key_argon_mem() {
+        let tmp_dir = TmpDir::new("new_key_argon_mem");
+        let key_path = cli_new_password_key(&tmp_dir.path, "mem");
+        let cmd = format!("{} key info -k {}", CLI_PATH, key_path.display());
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("protection:\tpassword").unwrap();
+        session.exp_string("argon:\tmem").unwrap();
+        session.exp_eof().unwrap();
     }
 
     /// Test that a file can be encrypted and decrypted.
@@ -441,6 +491,51 @@ mod cli_integ_tests {
         cli_check_key(&key_path, new_password);
     }
 
+    /// Test that an empty new password adds password protection.
+    #[test]
+    fn key_password_change_empty() {
+        let tmp_dir = TmpDir::new("key_password_change_empty");
+        let key_path = cli_new_key(&tmp_dir.path);
+
+        cli_change_password(&key_path, "");
+        cli_check_key(&key_path, "");
+
+        let json: serde_json::Value =
+            serde_json::from_reader(fs::File::open(key_path).unwrap()).unwrap();
+        assert!(json.get("argon").is_some());
+    }
+
+    /// Test that --no-password removes password protection.
+    #[test]
+    fn key_password_remove() {
+        let tmp_dir = TmpDir::new("key_password_remove");
+        let key_path = cli_new_password_key(&tmp_dir.path, "cpu");
+        let cmd = format!(
+            "{} key password --no-password -k {}",
+            CLI_PATH,
+            key_path.display()
+        );
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter key password:").unwrap();
+        session.send_line(DEFAULT_PASSWORD).unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+
+        let cmd = format!("{} key info --check -k {}", CLI_PATH, key_path.display());
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("protection:\tnone").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+
+        let json: serde_json::Value =
+            serde_json::from_reader(fs::File::open(key_path).unwrap()).unwrap();
+        assert!(json.get("secret").is_none());
+        assert!(json.get("wrapped_secret").is_some());
+    }
+
     /// Test that the ZYMIC_DIR config variable can set to change the
     /// default location for keys.
     #[test]
@@ -450,12 +545,9 @@ mod cli_integ_tests {
         let mut cmd = Command::new(CLI_PATH);
         cmd.arg("key");
         cmd.arg("new");
+        cmd.arg("--no-password");
         cmd.env("ZYMIC_DIR", format!("{}", tmp_dir.path.display()));
         let mut session = spawn_command(cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
-        session.exp_string("re-enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_eof().unwrap();
 
         let mut key_path = PathBuf::from(&tmp_dir.path);
@@ -474,7 +566,7 @@ mod cli_integ_tests {
         session.exp_string("path:").unwrap();
         session.exp_string("id:").unwrap();
         session.exp_string("date:").unwrap();
-        session.exp_string("argon:").unwrap();
+        session.exp_string("protection:\tnone").unwrap();
         session.exp_eof().unwrap();
     }
 
@@ -514,8 +606,6 @@ mod cli_integ_tests {
         );
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_string("version:\t2").unwrap();
         session
             .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
@@ -561,8 +651,6 @@ mod cli_integ_tests {
             plain_txt.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_string("error: File exists").unwrap();
         session.exp_eof().unwrap();
 
@@ -619,8 +707,6 @@ mod cli_integ_tests {
             cipher_txt.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session.exp_string("error: File exists").unwrap();
         session.exp_eof().unwrap();
 
@@ -659,8 +745,6 @@ mod cli_integ_tests {
             dir.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session
             .exp_string("error: directory encryption is not supported")
             .unwrap();
@@ -684,8 +768,6 @@ mod cli_integ_tests {
             plaintxt.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session
             .exp_string("error: output file is a directory")
             .unwrap();
@@ -697,7 +779,7 @@ mod cli_integ_tests {
     #[test]
     fn err_auth_failure() {
         let tmp_dir = TmpDir::new("err_auth_failure");
-        let key_path = cli_new_key(&tmp_dir.path);
+        let key_path = cli_new_password_key(&tmp_dir.path, "cpu");
         let plaintxt_path = create_plaintxt(&tmp_dir.path);
 
         let cmd = format!(
@@ -722,7 +804,7 @@ mod cli_integ_tests {
     #[test]
     fn err_key_password_change() {
         let tmp_dir = TmpDir::new("err_key_password_change");
-        let key_path = cli_new_key(&tmp_dir.path);
+        let key_path = cli_new_password_key(&tmp_dir.path, "cpu");
         let cmd = format!("{} key password -k {}", CLI_PATH, key_path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
@@ -776,8 +858,6 @@ mod cli_integ_tests {
             ciphertxt_path.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session
             .exp_string("error: input file extension is not valid, only .zym is supported")
             .unwrap();
@@ -803,8 +883,6 @@ mod cli_integ_tests {
             ciphertxt_path.display()
         );
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("enter key password:").unwrap();
-        session.send_line(DEFAULT_PASSWORD).unwrap();
         session
             .exp_string("error: input file extension is not valid, only .zym is supported")
             .unwrap();
