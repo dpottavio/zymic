@@ -91,7 +91,7 @@ zymic dec --v1 foo-v1.txt.zym
 ```
 ## ⌨️ Usage
 
-```bash
+```
 Usage: zymic <COMMAND>
 
 Commands:
@@ -115,7 +115,7 @@ Options:
 
 Encrypt data.
 
-```bash
+```
 Usage: zymic enc [OPTIONS] [FILE]
 
 Arguments:
@@ -134,7 +134,7 @@ Default output is `FILE` + "`.zym`" (e.g., `foo.txt` → `foo.txt.zym`)
 
 Decrypt data.
 
-```bash
+```
 Usage: zymic dec [OPTIONS] [FILE]
 
 Arguments:
@@ -157,7 +157,7 @@ Default output strips the `.zym` extension from the `FILE` (e.g.,
 Display encrypted file header information. Use `--auth` to authenticate the
 header with a key file.
 
-```bash
+```
 Usage: zymic info [OPTIONS] <FILE>
 
 Arguments:
@@ -173,7 +173,7 @@ Options:
 
 Create a new key file.
 
-```bash
+```
 Usage: zymic key new [OPTIONS]
 
 Options:
@@ -205,7 +205,7 @@ Options:
 
 Display key file metadata information
 
-```bash
+```
 Usage: zymic key info [OPTIONS]
 
 Options:
@@ -220,7 +220,7 @@ Add, change, or remove password protection for a key file.
 
 Pass `--no-password` to remove password protection.
 
-```bash
+```
 Usage: zymic key password [OPTIONS]
 
 Options:
