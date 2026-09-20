@@ -395,8 +395,8 @@ mod cli_integ_tests {
         let cmd = format!("{} key info -k {}", CLI_PATH, key_path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("protection:\tpassword").unwrap();
-        session.exp_string("argon:\tcpu").unwrap();
+        session.exp_string("  protection: password").unwrap();
+        session.exp_string("       argon: cpu").unwrap();
         session.exp_eof().unwrap();
     }
 
@@ -408,8 +408,8 @@ mod cli_integ_tests {
         let cmd = format!("{} key info -k {}", CLI_PATH, key_path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("protection:\tpassword").unwrap();
-        session.exp_string("argon:\tmem").unwrap();
+        session.exp_string("  protection: password").unwrap();
+        session.exp_string("       argon: mem").unwrap();
         session.exp_eof().unwrap();
     }
 
@@ -525,7 +525,7 @@ mod cli_integ_tests {
 
         let cmd = format!("{} key info --check -k {}", CLI_PATH, key_path.display());
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("protection:\tnone").unwrap();
+        session.exp_string("  protection: none").unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -563,10 +563,10 @@ mod cli_integ_tests {
         let cmd = format!("{} key info -k {}", CLI_PATH, key_path.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("path:").unwrap();
-        session.exp_string("id:").unwrap();
-        session.exp_string("date:").unwrap();
-        session.exp_string("protection:\tnone").unwrap();
+        session.exp_string("        path: ").unwrap();
+        session.exp_string("          id: ").unwrap();
+        session.exp_string("        date: ").unwrap();
+        session.exp_string("  protection: none").unwrap();
         session.exp_eof().unwrap();
     }
 

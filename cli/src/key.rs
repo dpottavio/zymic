@@ -97,7 +97,8 @@ fn argon_hash(
 
 impl fmt::Display for KeyFile {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "id:\t")?;
+        write!(f, "{:>13}", "id:")?;
+        write!(f, " ")?;
         for (i, byte) in self.id.iter().enumerate() {
             write!(f, "{:02x}", byte)?;
             if i < self.id.len() - 1 {
@@ -109,13 +110,13 @@ impl fmt::Display for KeyFile {
             .map_or("<date out of range>".to_string(), |d| {
                 d.to_rfc3339_opts(SecondsFormat::Secs, true)
             });
-        writeln!(f, "date:\t{}", date)?;
+        writeln!(f, "{:>13} {}", "date:", date)?;
         match self.argon {
             Some(argon) => {
-                writeln!(f, "protection:\tpassword")?;
-                write!(f, "argon:\t{argon}")?;
+                writeln!(f, "{:>13} password", "protection:")?;
+                write!(f, "{:>13} {}", "argon:", argon)?;
             }
-            None => write!(f, "protection:\tnone")?,
+            None => write!(f, "{:>13} none", "protection:")?,
         }
 
         Ok(())

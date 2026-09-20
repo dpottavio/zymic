@@ -575,7 +575,8 @@ pub fn handle_input() -> Result<(), Error> {
                 if args.check {
                     let _ = unwrap_key_file(&key)?;
                 }
-                println!("path:\t{}\n{key}", key_path.display());
+                println!("{:>13} {}", "path:", key_path.display());
+                println!("{key}");
             }
             KeyCommand::Password(args) => {
                 let key_path = fs::canonicalize(resolve_key_path(args.key)?)?;
