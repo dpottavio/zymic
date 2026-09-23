@@ -207,6 +207,10 @@ impl KeyFile {
 
     /// Return a copy of the key unwrapped. Caller must provide a
     /// `password` to unwrap a password-protected key.
+    ///
+    /// If the instances is unprotected, the `password` parameter is
+    /// ignored and the `ParentKey` is unwrapped using the Parent Key
+    /// Id and timestamp.
     pub fn unwrap(&self, password: &str) -> Result<ParentKey, Error> {
         let secret = match self.argon {
             Some(argon) => {

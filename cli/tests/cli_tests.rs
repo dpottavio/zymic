@@ -375,15 +375,13 @@ mod cli_integ_tests {
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session.exp_string("enter key password:").unwrap();
         session.send_line("").unwrap();
-        session.exp_string("re-enter key password:").unwrap();
-        session.send_line("").unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
 
         let json: serde_json::Value =
             serde_json::from_reader(fs::File::open(key_path).unwrap()).unwrap();
-        assert!(json.get("argon").is_some());
+        assert!(json.get("argon").is_none());
         assert!(json.get("wrapped_secret").is_some());
     }
 
@@ -491,18 +489,76 @@ mod cli_integ_tests {
         cli_check_key(&key_path, new_password);
     }
 
-    /// Test that an empty new password adds password protection.
+    /// Test that an empty new password on an unprotected key fails.
     #[test]
     fn key_password_change_empty() {
         let tmp_dir = TmpDir::new("key_password_change_empty");
         let key_path = cli_new_key(&tmp_dir.path);
+        let cmd = format!("{} key password -k {}", CLI_PATH, key_path.display());
 
-        cli_change_password(&key_path, "");
-        cli_check_key(&key_path, "");
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter new key password:").unwrap();
+        session.send_line("").unwrap();
+        session
+            .exp_string("error: new password is the same as old password")
+            .unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 1)));
+    }
+
+    /// Test that an empty new password removes existing password protection.
+    #[test]
+    fn key_password_remove_empty() {
+        let tmp_dir = TmpDir::new("key_password_remove_empty");
+        let key_path = cli_new_password_key(&tmp_dir.path, "cpu");
+        let cmd = format!("{} key password -k {}", CLI_PATH, key_path.display());
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter key password:").unwrap();
+        session.send_line(DEFAULT_PASSWORD).unwrap();
+        session.exp_string("enter new key password:").unwrap();
+        session.send_line("").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
+
+        let cmd = format!("{} key info --check -k {}", CLI_PATH, key_path.display());
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("  protection: none").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 0)));
 
         let json: serde_json::Value =
             serde_json::from_reader(fs::File::open(key_path).unwrap()).unwrap();
-        assert!(json.get("argon").is_some());
+        assert!(json.get("argon").is_none());
+        assert!(json.get("secret").is_none());
+        assert!(json.get("wrapped_secret").is_some());
+    }
+
+    /// Test that removing a password with empty input requires the correct old password.
+    #[test]
+    fn key_password_remove_empty_bad_password() {
+        let tmp_dir = TmpDir::new("key_password_remove_empty_bad_password");
+        let key_path = cli_new_password_key(&tmp_dir.path, "cpu");
+        let original = fs::read(&key_path).unwrap();
+        let cmd = format!("{} key password -k {}", CLI_PATH, key_path.display());
+
+        let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
+        session.exp_string("enter key password:").unwrap();
+        session
+            .send_line(&format!("{DEFAULT_PASSWORD}-bad"))
+            .unwrap();
+        session.exp_string("enter new key password:").unwrap();
+        session.send_line("").unwrap();
+        session.exp_string("error: authentication failure").unwrap();
+        session.exp_eof().unwrap();
+        let status = session.process_mut().exit().unwrap();
+        assert!(matches!(status, WaitStatus::Exited(_, 1)));
+
+        assert_eq!(fs::read(&key_path).unwrap(), original);
+        cli_check_key(&key_path, DEFAULT_PASSWORD);
     }
 
     /// Test that --no-password removes password protection.

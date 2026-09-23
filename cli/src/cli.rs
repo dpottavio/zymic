@@ -553,12 +553,17 @@ pub fn handle_input() -> Result<(), Error> {
                     KeyFile::new_unprotected(id, &secret)?
                 } else {
                     let password = Zeroizing::new(rpassword::prompt_password(KEY_PASSWORD_PROMPT)?);
-                    let password_chk =
-                        Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
-                    if password != password_chk {
-                        return Err(Error::new(ErrorKind::PasswordMismatch));
+                    if password.is_empty() {
+                        KeyFile::new_unprotected(id, &secret)?
+                    } else {
+                        let password_chk = Zeroizing::new(rpassword::prompt_password(
+                            REENTER_KEY_PASSWORD_PROMPT,
+                        )?);
+                        if password != password_chk {
+                            return Err(Error::new(ErrorKind::PasswordMismatch));
+                        }
+                        KeyFile::new(id, &secret, args.argon_config.to_setting(), &password)?
                     }
-                    KeyFile::new(id, &secret, args.argon_config.to_setting(), &password)?
                 };
 
                 if let Some(parent) = key_path.parent() {
@@ -592,26 +597,50 @@ pub fn handle_input() -> Result<(), Error> {
                     None
                 };
 
-                let old_password = old_password
-                    .as_ref()
-                    .map_or("", |password| password.as_str());
-                if args.no_password {
-                    if !key.is_password_protected() {
-                        return Err(Error::new(ErrorKind::PasswordNoChange));
+                match old_password {
+                    // Replace or remove an existing password.
+                    Some(old_password) => {
+                        let old_password = old_password.as_ref();
+                        if args.no_password {
+                            key.remove_password(old_password)?;
+                        } else {
+                            let new_password = Zeroizing::new(rpassword::prompt_password(
+                                KEY_NEW_PASSWORD_PROMPT,
+                            )?);
+                            if new_password.is_empty() {
+                                key.remove_password(old_password)?;
+                            } else {
+                                if old_password == new_password.as_str() {
+                                    return Err(Error::new(ErrorKind::PasswordNoChange));
+                                }
+                                let new_password_chk = Zeroizing::new(rpassword::prompt_password(
+                                    REENTER_KEY_PASSWORD_PROMPT,
+                                )?);
+                                if new_password != new_password_chk {
+                                    return Err(Error::new(ErrorKind::PasswordMismatch));
+                                }
+                                key.rewrap(old_password, &new_password)?;
+                            }
+                        }
                     }
-                    key.remove_password(old_password)?;
-                } else {
-                    let new_password =
-                        Zeroizing::new(rpassword::prompt_password(KEY_NEW_PASSWORD_PROMPT)?);
-                    if key.is_password_protected() && old_password == new_password.as_str() {
-                        return Err(Error::new(ErrorKind::PasswordNoChange));
+                    // Add password to an unprotected key.
+                    None => {
+                        if args.no_password {
+                            return Err(Error::new(ErrorKind::PasswordNoChange));
+                        }
+                        let new_password =
+                            Zeroizing::new(rpassword::prompt_password(KEY_NEW_PASSWORD_PROMPT)?);
+                        if new_password.is_empty() {
+                            return Err(Error::new(ErrorKind::PasswordNoChange));
+                        }
+                        let password_chk = Zeroizing::new(rpassword::prompt_password(
+                            REENTER_KEY_PASSWORD_PROMPT,
+                        )?);
+                        if new_password != password_chk {
+                            return Err(Error::new(ErrorKind::PasswordMismatch));
+                        }
+                        key.rewrap("", &new_password)?;
                     }
-                    let new_password_chk =
-                        Zeroizing::new(rpassword::prompt_password(REENTER_KEY_PASSWORD_PROMPT)?);
-                    if new_password != new_password_chk {
-                        return Err(Error::new(ErrorKind::PasswordMismatch));
-                    }
-                    key.rewrap(old_password, &new_password)?;
                 }
                 atomic_replace(&key_path, |file| {
                     serde_json::to_writer(file, &key)?;
