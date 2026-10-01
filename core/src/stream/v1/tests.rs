@@ -94,7 +94,12 @@ fn framebuf_encoded() {
     let encoded_frame = &INVOCATION_FIXTURE[HEADER_LEN..];
     let mut frame_buf = FrameBuf::new(&header);
 
-    frame_buf.chunk_mut()[..encoded_frame.len()].copy_from_slice(encoded_frame);
+    let chunk = frame_buf.chunk_mut();
+    assert_eq!(chunk.len(), header.frame_len().as_usize());
+    chunk[..encoded_frame.len()].copy_from_slice(encoded_frame);
+    assert!(frame_buf
+        .commit_chunk_mut(header.frame_len().as_usize() + 1)
+        .is_err());
     frame_buf.commit_chunk_mut(encoded_frame.len()).unwrap();
 
     assert!(frame_buf.decrypt(0).unwrap());
@@ -124,7 +129,10 @@ fn invocation_count_auth() {
     let error = Reader::new(Cursor::new(tampered), &header)
         .read_to_end(&mut Vec::new())
         .unwrap_err();
-    assert!(matches!(inner_error(&error).kind(), ErrorKind::Cipher(_)));
+    assert!(matches!(
+        inner_error(&error).kind(),
+        ErrorKind::CipherDecrypt
+    ));
 }
 
 #[test]

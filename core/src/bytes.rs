@@ -3,7 +3,6 @@
 
 use crate::error::{Error, ErrorKind};
 
-use alloc::format;
 #[cfg(feature = "serde")]
 use core::fmt;
 use core::ops::{Deref, DerefMut, Index, IndexMut, Range, RangeFrom, RangeTo};
@@ -312,8 +311,7 @@ impl<const N: usize> ByteArray<N> {
     ///
     /// # Errors
     ///
-    /// Returns an [`Error`] containing the fill function's error message if
-    /// the fill function fails.
+    /// Returns an [`Error`] if the fill function fails.
     ///
     /// # Example
     ///
@@ -330,10 +328,9 @@ impl<const N: usize> ByteArray<N> {
     pub fn try_from_fill<F, E>(fill: F) -> Result<Self, Error>
     where
         F: FnOnce(&mut [u8]) -> Result<(), E>,
-        E: core::fmt::Display,
     {
         let mut bytes = Self::default();
-        fill(bytes.as_mut()).map_err(|e| Error::new(ErrorKind::ByteFill(format!("{e}"))))?;
+        fill(bytes.as_mut()).map_err(|_| Error::new(ErrorKind::ByteFill))?;
         Ok(bytes)
     }
 
@@ -614,12 +611,9 @@ mod tests {
 
     #[test]
     fn byte_array_try_from_fill_err() {
-        let error = ByteArray::<4>::try_from_fill(|_| Err("fill failed")).unwrap_err();
+        let error = ByteArray::<4>::try_from_fill(|_| Err(())).unwrap_err();
 
-        assert!(matches!(
-            error.kind(),
-            ErrorKind::ByteFill(message) if message == "fill failed"
-        ));
+        assert!(matches!(error.kind(), ErrorKind::ByteFill));
     }
 
     #[test]

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: MIT
 //! Error types for the Zymic core crate.
-use alloc::string::{String, ToString};
 use core::fmt;
 
 #[derive(Debug)]
@@ -11,8 +10,8 @@ pub struct Error {
 #[derive(Debug)]
 pub(crate) enum ErrorKind {
     Authentication,
-    ByteFill(String),
-    Cipher(String),
+    ByteFill,
+    CipherDecrypt,
     #[cfg(feature = "std")]
     IntegerOverflow,
     InvalidArgument,
@@ -23,7 +22,7 @@ pub(crate) enum ErrorKind {
     InvalidFrameLength(u8),
     InvalidMagicNumber(u32),
     #[cfg(feature = "std")]
-    Io(String),
+    Io(std::io::Error),
     ParentKeyIdMismatch,
     #[cfg(feature = "std")]
     StreamFailed,
@@ -43,8 +42,8 @@ impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.kind {
             ErrorKind::Authentication => write!(f, "authentication failure"),
-            ErrorKind::ByteFill(e) => write!(f, "failed to fill byte buffer: {e}"),
-            ErrorKind::Cipher(e) => write!(f, "cipher failure: {e}"),
+            ErrorKind::ByteFill => write!(f, "failed to fill byte buffer"),
+            ErrorKind::CipherDecrypt => write!(f, "cipher decryption failure"),
             #[cfg(feature = "std")]
             ErrorKind::IntegerOverflow => write!(f, "integer overflow"),
             ErrorKind::InvalidArgument => write!(f, "invalid argument"),
@@ -105,7 +104,7 @@ impl std::error::Error for Error {}
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
-        Self::new(ErrorKind::Io(error.to_string()))
+        Self::new(ErrorKind::Io(error))
     }
 }
 
@@ -114,12 +113,6 @@ impl From<std::io::Error> for Error {
 impl From<Error> for std::io::Error {
     fn from(error: Error) -> Self {
         Self::other(error)
-    }
-}
-
-impl From<aes_gcm::Error> for Error {
-    fn from(error: aes_gcm::Error) -> Self {
-        Self::new(ErrorKind::Cipher(error.to_string()))
     }
 }
 

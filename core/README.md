@@ -14,8 +14,7 @@
 An implementation of the Zymic authenticated encryption format for
 protecting data at rest. It provides streaming encryption and
 decryption through Rust’s `std::io` traits, plus lower-level frame APIs
-for `no_std` environments with allocation support. Large streams can be
-processed with bounded memory.
+for `no_std` environments without requiring an allocator.
 
 Zymic is a variant of the [STREAM online authenticated-encryption
 construction](https://eprint.iacr.org/2015/189.pdf). For more

@@ -53,8 +53,7 @@ impl ParentKey {
     ///
     /// # Errors
     ///
-    /// Returns an [`Error`] containing the fill function's error
-    /// message if either call to the fill function fails.
+    /// Returns an [`Error`] if either call to the fill function fails.
     ///
     /// # Example
     ///
@@ -73,7 +72,6 @@ impl ParentKey {
     pub fn try_from_fill<F, E>(mut fill: F) -> Result<Self, Error>
     where
         F: FnMut(&mut [u8]) -> Result<(), E>,
-        E: core::fmt::Display,
     {
         let id = ParentKeyId::try_from_fill(&mut fill)?;
         let secret = ParentKeySecret::try_from_fill(fill)?;
@@ -100,8 +98,7 @@ impl ParentKeySecret {
     ///
     /// # Errors
     ///
-    /// Returns an [`Error`] containing the fill function's error
-    /// message if the call to the `fill` function fails.
+    /// Returns an [`Error`] if the call to the `fill` function fails.
     ///
     /// # Example
     ///
@@ -116,7 +113,6 @@ impl ParentKeySecret {
     pub fn try_from_fill<F, E>(fill: F) -> Result<Self, Error>
     where
         F: FnOnce(&mut [u8]) -> Result<(), E>,
-        E: core::fmt::Display,
     {
         Ok(Self {
             bytes: ByteArray::try_from_fill(fill)?,

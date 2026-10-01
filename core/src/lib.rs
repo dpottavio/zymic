@@ -39,10 +39,8 @@
 #![no_std]
 #![cfg_attr(docsrs, feature(doc_cfg))]
 
-#[cfg(feature = "std")]
+#[cfg(any(feature = "std", test))]
 extern crate std;
-
-extern crate alloc;
 
 pub mod bytes;
 pub mod error;

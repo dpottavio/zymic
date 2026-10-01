@@ -24,7 +24,6 @@ use aes_gcm::{
     aes::{cipher::consts::U12, Aes256},
     AesGcm, KeyInit as AesKeyInit, Nonce as AesNonce, Tag,
 };
-use alloc::vec::Vec;
 use core::{fmt, ops::Range};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -124,6 +123,9 @@ pub struct Header {
 
 /// A read-only buffer for decoding one v1 frame without `std`.
 ///
+/// Stores 64 KiB inline without allocation, regardless of the configured
+/// [`FrameLength`].
+///
 /// Load an encoded frame with [`copy_from_encrypted_bytes`](Self::copy_from_encrypted_bytes),
 /// or write directly into [`chunk_mut`](Self::chunk_mut) and then call
 /// [`commit_chunk_mut`](Self::commit_chunk_mut). After [`decrypt`](Self::decrypt)
@@ -132,7 +134,9 @@ pub struct Header {
 /// This type intentionally provides no v1 encryption operations.
 #[cfg_attr(docsrs, doc(cfg(feature = "v1")))]
 pub struct FrameBuf {
-    buf: Vec<u8>,
+    buf: ByteArray<{ FrameLength::Len64KiB.as_usize() }>,
+    /// Number of initialized frame bytes in use.
+    buf_pos: usize,
     frame_len: usize,
     max_payload_len: usize,
     payload_len: usize,
@@ -199,7 +203,7 @@ impl fmt::Display for FrameLength {
 
 impl FrameLength {
     /// Return the encoded frame length in bytes.
-    pub fn as_usize(self) -> usize {
+    pub const fn as_usize(self) -> usize {
         1 << (self as u8)
     }
 }
@@ -272,7 +276,8 @@ impl FrameBuf {
         let max_payload_len = frame_len - FRAME_META_LEN;
 
         Self {
-            buf: Vec::with_capacity(frame_len),
+            buf: ByteArray::default(),
+            buf_pos: 0,
             frame_len,
             max_payload_len,
             payload_len: 0,
@@ -283,7 +288,7 @@ impl FrameBuf {
     /// Return the authenticated plaintext after a successful call to
     /// [`decrypt`](Self::decrypt).
     pub fn payload(&self) -> &[u8] {
-        if self.buf.len() < PAYLOAD_OFFSET {
+        if self.buf_pos < PAYLOAD_OFFSET {
             &self.buf[..0]
         } else {
             &self.buf[PAYLOAD_OFFSET..PAYLOAD_OFFSET + self.payload_len]
@@ -296,7 +301,7 @@ impl FrameBuf {
     /// reordered frames are rejected. Returns `true` for an End Frame and
     /// `false` for a Body Frame.
     pub fn decrypt(&mut self, expected_seq_num: u32) -> Result<bool, Error> {
-        if self.buf.len() < FRAME_META_LEN {
+        if self.buf_pos < FRAME_META_LEN {
             return Err(Error::new(ErrorKind::InvalidBufLength));
         }
 
@@ -304,7 +309,7 @@ impl FrameBuf {
         // form the 12-byte AEAD nonce. The invocation count is retained only
         // as an on-wire compatibility detail; the read-only API never exposes
         // or advances it.
-        let (nonce, frame) = self.buf.split_at_mut(SEQ_NUM_LEN + INVOCATION_LEN);
+        let (nonce, frame) = self.buf[..self.buf_pos].split_at_mut(SEQ_NUM_LEN + INVOCATION_LEN);
         let (end_len_bytes, frame) = frame.split_at_mut(END_LEN);
         let end_len = u32::from_le_bytes(
             end_len_bytes
@@ -332,7 +337,8 @@ impl FrameBuf {
             AesNonce::<FrameNonceLen>::try_from(&nonce[..]).expect("v1 nonce should be 12 bytes");
 
         self.cipher
-            .decrypt_inout_detached(&nonce, end_len_bytes, payload.into(), &tag)?;
+            .decrypt_inout_detached(&nonce, end_len_bytes, payload.into(), &tag)
+            .map_err(|_| Error::new(ErrorKind::CipherDecrypt))?;
 
         let decoded_seq_num = u32::from_le_bytes(
             nonce[..SEQ_NUM_LEN]
@@ -357,17 +363,18 @@ impl FrameBuf {
     /// bytes actually written before decrypting.
     pub fn chunk_mut(&mut self) -> &mut [u8] {
         self.clear();
-        self.buf.resize(self.frame_len, 0);
-        &mut self.buf
+        self.buf[..self.frame_len].fill(0);
+        self.buf_pos = self.frame_len;
+        &mut self.buf[..self.buf_pos]
     }
 
     /// Commit the number of encoded bytes written through
     /// [`chunk_mut`](Self::chunk_mut).
     pub fn commit_chunk_mut(&mut self, len: usize) -> Result<(), Error> {
-        if len > self.buf.len() {
+        if len > self.buf_pos {
             return Err(Error::new(ErrorKind::InvalidBufLength));
         }
-        self.buf.truncate(len);
+        self.buf_pos = len;
         self.payload_len = 0;
         Ok(())
     }
@@ -380,7 +387,7 @@ impl FrameBuf {
         self.clear();
 
         let len = usize::min(src.len(), self.frame_len);
-        self.buf.resize(len, 0);
+        self.buf_pos = len;
         self.buf[..len].copy_from_slice(&src[..len]);
         len
     }
@@ -389,20 +396,13 @@ impl FrameBuf {
         #[cfg(feature = "zeroize")]
         self.buf.zeroize();
 
-        self.buf.clear();
+        self.buf_pos = 0;
         self.payload_len = 0;
     }
 
     #[cfg(feature = "std")]
     fn is_partial(&self) -> bool {
-        self.buf.len() < FRAME_HEADER_LEN
-    }
-}
-
-#[cfg(feature = "zeroize")]
-impl Drop for FrameBuf {
-    fn drop(&mut self) {
-        self.buf.zeroize();
+        self.buf_pos < FRAME_HEADER_LEN
     }
 }
 

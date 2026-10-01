@@ -71,7 +71,6 @@ use aes_gcm::{
     aes::{cipher::consts::U12, Aes256},
     AesGcm, KeyInit as AesKeyInit, Nonce as AesNonce, Tag,
 };
-use alloc::vec::Vec;
 use core::{fmt, ops::Range};
 use hkdf::Hkdf;
 use sha2::Sha256;
@@ -283,6 +282,9 @@ pub struct SequenceNumber {
 /// This is a lower-level data structure for working with Zymic frames
 /// directly. It is suitable when `std` is unavailable or you need finer control.
 ///
+/// Stores 64 KiB inline without allocation, regardless of the configured
+/// [`FrameLength`]. Only the bytes in use are exposed as a slice.
+///
 #[cfg_attr(
     feature = "std",
     doc = "For bulk encryption/decryption,
@@ -379,7 +381,9 @@ pub struct SequenceNumber {
 /// [`write_payload`]: Self::write_payload
 pub struct FrameBuf {
     /// Backing byte buffer for the entire frame (header + payload + tag).
-    buf: Vec<u8>,
+    buf: ByteArray<{ FrameLength::Len64KiB.as_usize() }>,
+    /// Number of initialized frame bytes in use.
+    buf_pos: usize,
     /// The total frame length in bytes, as defined by the stream header.
     frame_len: usize,
     /// Max number of payload bytes this frame buffer can consume.
@@ -614,7 +618,7 @@ impl FrameLength {
     /// let len = FrameLength::Len4KiB.as_usize();
     /// assert_eq!(len, 4096);
     /// ```
-    pub fn as_usize(self) -> usize {
+    pub const fn as_usize(self) -> usize {
         1 << (self as u8)
     }
 }
@@ -637,7 +641,8 @@ impl FrameBuf {
         let cipher = AesKeyInit::new(&header.data_key);
 
         Self {
-            buf: Vec::with_capacity(frame_len),
+            buf: ByteArray::default(),
+            buf_pos: 0,
             frame_len,
             max_payload_len,
             max_payload_pos: PAYLOAD_OFFSET + max_payload_len,
@@ -708,8 +713,9 @@ impl FrameBuf {
         }
         let abs_payload_off = PAYLOAD_OFFSET + payload_off;
         let buf_len = usize::min(self.max_payload_pos, abs_payload_off + payload.len());
-        if buf_len > self.buf.len() {
-            self.buf.resize(buf_len, 0);
+        if buf_len > self.buf_pos {
+            self.buf[self.buf_pos..buf_len].fill(0);
+            self.buf_pos = buf_len;
         }
         let copy_len = buf_len - abs_payload_off;
 
@@ -733,7 +739,7 @@ impl FrameBuf {
     /// [`decrypt`]: Self::decrypt
     /// [`encrypt`]: Self::encrypt
     pub fn payload(&self) -> &[u8] {
-        if self.buf.len() < PAYLOAD_OFFSET {
+        if self.buf_pos < PAYLOAD_OFFSET {
             &self.buf[..0]
         } else {
             &self.buf[PAYLOAD_OFFSET..PAYLOAD_OFFSET + self.payload_len]
@@ -785,27 +791,25 @@ impl FrameBuf {
             seq_num.is_end() || self.payload_len == self.max_payload_len,
             "Body Frame payload must fill the configured Frame Length"
         );
-        if self.buf.len() < SEQ_NUM_LEN {
-            self.buf.resize(SEQ_NUM_LEN, 0);
+        if self.buf_pos < SEQ_NUM_LEN {
+            self.buf_pos = SEQ_NUM_LEN;
         }
-        debug_assert!(self.payload_len <= self.buf.len() - SEQ_NUM_LEN);
+        debug_assert!(self.payload_len <= self.buf_pos - SEQ_NUM_LEN);
 
         let seq_num_bytes = seq_num.to_bytes();
         self.set_bytes(seq_num_bytes.as_slice(), SEQ_NUM_OFFSET);
 
         let nonce = frame_nonce(seq_num_bytes);
-        let (_, payload) = self.buf.split_at_mut(SEQ_NUM_LEN);
+        let (_, payload) = self.buf[..self.buf_pos].split_at_mut(SEQ_NUM_LEN);
 
         let tag = self
             .cipher
             .encrypt_inout_detached(&nonce, &[], (&mut payload[..self.payload_len]).into())
             .expect("buffer of sufficient size");
 
-        // Ensure that we can append the authentication tag after the
-        // payload.
-        self.buf.truncate(self.payload_len + SEQ_NUM_LEN);
-
-        self.buf.extend_from_slice(&tag);
+        let tag_offset = SEQ_NUM_LEN + self.payload_len;
+        self.buf[tag_offset..tag_offset + FRAME_TAG_LEN].copy_from_slice(&tag);
+        self.buf_pos = tag_offset + FRAME_TAG_LEN;
     }
 
     /// Decrypt the frame in-place and return its parsed header. The
@@ -829,11 +833,11 @@ impl FrameBuf {
     ///
     /// [`Error`]: crate::error::Error
     pub fn decrypt(&mut self, frame_idx: u64) -> Result<SequenceNumber, Error> {
-        if self.buf.len() < FRAME_META_LEN {
+        if self.buf_pos < FRAME_META_LEN {
             return Err(Error::new(ErrorKind::InvalidBufLength));
         }
-        let frame_len = self.buf.len();
-        let (frame_header, frame) = self.buf.split_at_mut(SEQ_NUM_LEN);
+        let frame_len = self.buf_pos;
+        let (frame_header, frame) = self.buf[..self.buf_pos].split_at_mut(SEQ_NUM_LEN);
         let seq_num_bytes: [u8; SEQ_NUM_LEN] = frame_header
             .try_into()
             .expect("sequence number should be 8 bytes");
@@ -849,7 +853,8 @@ impl FrameBuf {
         let nonce = frame_nonce(seq_num_bytes);
 
         self.cipher
-            .decrypt_inout_detached(&nonce, &[], payload.into(), &tag)?;
+            .decrypt_inout_detached(&nonce, &[], payload.into(), &tag)
+            .map_err(|_| Error::new(ErrorKind::CipherDecrypt))?;
 
         if frame_idx != seq_num.frame_idx() {
             return Err(Error::new(ErrorKind::UnexpectedSeqNum(
@@ -871,7 +876,7 @@ impl FrameBuf {
         #[cfg(feature = "zeroize")]
         self.buf.zeroize();
 
-        self.buf.clear();
+        self.buf_pos = 0;
         self.payload_len = 0;
     }
 
@@ -879,12 +884,12 @@ impl FrameBuf {
     ///
     /// Used only in tests to check whether the frame buffer is empty.
     pub fn is_empty(&self) -> bool {
-        self.buf.is_empty()
+        self.buf_pos == 0
     }
 
     /// Return the number of bytes in the frame buffer.
     pub fn len(&self) -> usize {
-        self.buf.len()
+        self.buf_pos
     }
 
     /// Copy raw encrypted bytes (one frame) into this buffer.
@@ -903,7 +908,7 @@ impl FrameBuf {
         self.clear();
 
         let len = usize::min(src.len(), self.frame_len);
-        self.buf.resize(len, 0);
+        self.buf_pos = len;
         self.buf[..len].copy_from_slice(&src[..len]);
         len
     }
@@ -912,8 +917,8 @@ impl FrameBuf {
     ///
     /// This prepares the buffer for a raw, zero-copy read of one
     /// on-wire frame (header + encrypted payload + tag). It clears
-    /// any previous contents and resizes the internal buffer to
-    /// exactly `FrameLength`, then returns a mutable slice you can
+    /// any previous contents and prepares exactly `FrameLength`
+    /// zeroed bytes, then returns a mutable slice you can
     /// fill (e.g., via a device read).
     ///
     /// After writing, call [`commit_chunk_mut`] with the number
@@ -958,13 +963,13 @@ impl FrameBuf {
     /// [`commit_chunk_mut`]: Self::commit_chunk_mut
     pub fn chunk_mut(&mut self) -> &mut [u8] {
         self.clear_resize_to_full();
-        &mut self.buf
+        &mut self.buf[..self.buf_pos]
     }
 
     /// Commit the number of bytes written into the slice returned by
     /// [`chunk_mut`].
     ///
-    /// Truncates the internal buffer to `len`. This does not perform
+    /// Sets the used buffer length to `len`. This does not perform
     /// structural validation or decryption; [`decrypt`] will do that.
     ///
     /// See [`chunk_mut`] for an example of loading and committing a frame.
@@ -978,10 +983,10 @@ impl FrameBuf {
     /// [`decrypt`]: Self::decrypt
     /// [`chunk_mut`]: Self::chunk_mut
     pub fn commit_chunk_mut(&mut self, len: usize) -> Result<(), Error> {
-        if len > self.buf.len() {
+        if len > self.buf_pos {
             return Err(Error::new(ErrorKind::InvalidBufLength));
         }
-        self.buf.truncate(len);
+        self.buf_pos = len;
         self.payload_len = 0;
 
         Ok(())
@@ -996,7 +1001,7 @@ impl FrameBuf {
     /// Used by unit tests to inspect buffer state.
     #[cfg(test)]
     fn is_partial(&self) -> bool {
-        self.buf.len() < SEQ_NUM_LEN
+        self.buf_pos < SEQ_NUM_LEN
     }
 
     /// Overwrite bytes in the buffer starting at the given `offset`.
@@ -1014,27 +1019,21 @@ impl FrameBuf {
 
     /// Clear the buffer and expand it to the full frame length.
     ///
-    /// The internal buffer is emptied and then resized to the maximum
-    /// capacity defined by `frame_len`, filling new bytes with `0`.
+    /// The used buffer length is set to `frame_len` and those bytes
+    /// are filled with `0`.
     ///
     /// This is typically used to prepare the buffer for reading or
     /// decrypting an entire frame from an input source.
     fn clear_resize_to_full(&mut self) {
         self.clear();
-        self.buf.resize(self.frame_len, 0);
-    }
-}
-
-#[cfg(feature = "zeroize")]
-impl Drop for FrameBuf {
-    fn drop(&mut self) {
-        self.buf.zeroize();
+        self.buf[..self.frame_len].fill(0);
+        self.buf_pos = self.frame_len;
     }
 }
 
 impl AsRef<[u8]> for FrameBuf {
     fn as_ref(&self) -> &[u8] {
-        &self.buf
+        &self.buf[..self.buf_pos]
     }
 }
 

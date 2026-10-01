@@ -12,7 +12,7 @@ use crate::{
     error::ErrorKind,
     key::{ParentKey, ParentKeyId, ParentKeySecret},
 };
-use alloc::{format, vec, vec::Vec};
+use std::{format, vec, vec::Vec};
 
 #[cfg(feature = "std")]
 use super::{HeaderBytes, StreamCore, ZymicReaderBuilder, ZymicWriter, MAX_FRAME_INDEX};
@@ -738,6 +738,59 @@ fn framebuf_clear() {
     frame_buf.write_payload(0, &plain_txt).unwrap();
     frame_buf.clear();
     validate_framebuf(&frame_buf, 0, header.frame_len.as_usize());
+    assert!(frame_buf.as_ref().is_empty());
+    #[cfg(feature = "zeroize")]
+    assert!(frame_buf.buf.iter().all(|&byte| byte == 0));
+}
+
+#[test]
+fn framebuf_reuse_all_frame_lengths() {
+    let parent_key = mock_parent_key();
+    for frame_len in [
+        FrameLength::Len4KiB,
+        FrameLength::Len8KiB,
+        FrameLength::Len16KiB,
+        FrameLength::Len32KiB,
+        FrameLength::Len64KiB,
+    ] {
+        let header = Header::new_with_frame_len(&parent_key, TEST_NONCE, frame_len);
+        let mut writer = FrameBuf::new(&header);
+        let mut reader = FrameBuf::new(&header);
+        let full_payload = vec![0xa5; frame_len.as_usize() - FRAME_META_LEN];
+
+        // Reuse the same storage for a full Body Frame, a short End Frame,
+        // and an empty End Frame, exercising both frame-loading APIs.
+        for (index, payload) in [full_payload.as_slice(), &b"short"[..], &[]]
+            .into_iter()
+            .enumerate()
+        {
+            writer.clear();
+            assert_eq!(writer.write_payload(0, payload).unwrap(), payload.len());
+            let sequence = SequenceNumber::new(index as u64, index != 0);
+            writer.encrypt(&sequence);
+            assert_eq!(writer.len(), payload.len() + FRAME_META_LEN);
+            assert_eq!(writer.as_ref().len(), writer.len());
+            let frame_bytes: &[u8] = &writer;
+            assert_eq!(frame_bytes.len(), writer.len());
+
+            let chunk = reader.chunk_mut();
+            assert_eq!(chunk.len(), frame_len.as_usize());
+            assert!(chunk.iter().all(|&byte| byte == 0));
+            chunk[..writer.len()].copy_from_slice(writer.as_ref());
+            assert!(reader.commit_chunk_mut(frame_len.as_usize() + 1).is_err());
+            reader.commit_chunk_mut(writer.len()).unwrap();
+            assert_eq!(reader.len(), writer.len());
+            reader.decrypt(index as u64).unwrap();
+            assert_eq!(reader.payload(), payload);
+
+            assert_eq!(
+                reader.copy_from_encrypted_bytes(writer.as_ref()),
+                writer.len()
+            );
+            reader.decrypt(index as u64).unwrap();
+            assert_eq!(reader.payload(), payload);
+        }
+    }
 }
 
 #[test]
@@ -888,7 +941,7 @@ fn framebuf_decrypt_end_flag_tamper_err() {
     frame_buf.buf[SEQ_NUM_OFFSET + SEQ_NUM_LEN - 1] &= 0x7f;
 
     if let Err(e) = frame_buf.decrypt(1) {
-        assert!(matches!(e.kind(), ErrorKind::Cipher(_)));
+        assert!(matches!(e.kind(), ErrorKind::CipherDecrypt));
     } else {
         panic!("expected an error");
     }
@@ -908,10 +961,10 @@ fn framebuf_decrypt_truncate() {
 
     // Truncate: keep only header + tag, drop payload bytes
     let keep = SEQ_NUM_LEN + FRAME_TAG_LEN;
-    frame_buf.buf.truncate(keep);
+    frame_buf.buf_pos = keep;
 
     if let Err(e) = frame_buf.decrypt(1) {
-        assert!(matches!(e.kind(), ErrorKind::Cipher(_)))
+        assert!(matches!(e.kind(), ErrorKind::CipherDecrypt))
     } else {
         panic!("expected an error")
     }
@@ -925,7 +978,7 @@ fn framebuf_decrypt_partial_body_err() {
     let payload = vec![0; frame_buf.max_payload_len];
     frame_buf.write_payload(0, &payload).unwrap();
     frame_buf.encrypt(&SequenceNumber::new(1, false));
-    frame_buf.buf.truncate(frame_buf.frame_len - 1);
+    frame_buf.buf_pos = frame_buf.frame_len - 1;
 
     if let Err(err) = frame_buf.decrypt(1) {
         assert!(matches!(err.kind(), ErrorKind::InvalidBufLength));
@@ -999,11 +1052,11 @@ fn framebuf_integrity_err() {
 
     // Flip the bits for each byte of the cipher text and confirm
     // that decryption fails.
-    for i in 0..frame_buf.buf.len() {
+    for i in 0..frame_buf.len() {
         let mut buf_copy = frame_buf.buf.clone();
         buf_copy[i] = !buf_copy[i];
         let mut frame_buf_reader = FrameBuf::new(&header);
-        frame_buf_reader.buf = buf_copy;
+        frame_buf_reader.copy_from_encrypted_bytes(&buf_copy[..frame_buf.len()]);
         let result = frame_buf_reader.decrypt(1);
         assert!(result.is_err());
     }
