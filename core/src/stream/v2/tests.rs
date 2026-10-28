@@ -26,6 +26,14 @@ use std::io::{Cursor, Read, Seek, SeekFrom, Write};
 
 const TEST_NONCE: HeaderNonce = byte_array![3u8; {HeaderNonce::LEN}];
 
+const CHACHA20POLY1305_HEADER: [u8; 80] = [
+    0x2e, 0x7a, 0x79, 0x6d, 0x02, 0x01, 0x00, 0x0e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03, 0x03,
+    0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01, 0x01,
+    0x28, 0x13, 0x97, 0xa1, 0x03, 0x23, 0x2e, 0x70, 0xd9, 0x06, 0x50, 0x44, 0xbc, 0xad, 0x0a, 0x78,
+    0xab, 0x2c, 0xc5, 0xe1, 0xe9, 0xa6, 0x9c, 0x87, 0x07, 0x50, 0x50, 0x33, 0x40, 0x28, 0x25, 0x8f,
+];
+
 fn mock_parent_key() -> ParentKey {
     const ID: ParentKeyId = byte_array![1u8; {ParentKeyId::LEN}];
     let id = ParentKeyId::from(ID);
@@ -243,6 +251,103 @@ fn header_kdf_outputs() {
 
     assert_eq!(&header.bytes()[HEADER_MAC_OFFSET..], &expected_header_mac);
     assert_eq!(&header.data_key[..], &expected_data_key);
+}
+
+/// Fixture calculated independently with Node.js crypto: HKDF-SHA-256
+/// expansion from the parent secret and ChaCha20-Poly1305 encryption.
+#[cfg(feature = "chacha20poly1305")]
+#[test]
+fn chacha20poly1305_format_fixture() {
+    const DATA_KEY: [u8; 32] = [
+        0x0b, 0x13, 0x60, 0xb9, 0x8a, 0xf1, 0x72, 0xb0, 0x06, 0x6b, 0x54, 0x86, 0x4c, 0xbc, 0xa4,
+        0x2a, 0x20, 0x79, 0x36, 0x2b, 0x58, 0x94, 0xd9, 0xb4, 0x2a, 0x1c, 0x36, 0x8e, 0x58, 0x4e,
+        0x13, 0x16,
+    ];
+    const FRAME: [u8; 40] = [
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x80, 0xa5, 0x48, 0x2c, 0x5b, 0x19, 0xd4, 0x85,
+        0xfc, 0x1b, 0x5a, 0xac, 0xcf, 0x94, 0xaf, 0xad, 0xb0, 0x80, 0x94, 0x2e, 0x7a, 0x5a, 0xa4,
+        0x49, 0x9e, 0x2c, 0x1d, 0x49, 0xbf, 0xd2, 0xa0, 0xa6, 0xc1,
+    ];
+    const PLAINTEXT: &[u8] = b"ChaCha20 fixture";
+
+    let parent_key = mock_parent_key();
+    let header = HeaderBuilder::new(&parent_key, TEST_NONCE)
+        .with_algorithm(CryptoAlgorithm::ChaCha20Poly1305HkdfSha256)
+        .build();
+    assert_eq!(header.bytes().as_slice(), CHACHA20POLY1305_HEADER);
+    assert_eq!(&header.data_key[..], DATA_KEY);
+
+    let parsed = Header::from_bytes(
+        &parent_key,
+        super::HeaderBytes::from_array(CHACHA20POLY1305_HEADER),
+    )
+    .unwrap();
+    assert_eq!(
+        parsed.algorithm(),
+        CryptoAlgorithm::ChaCha20Poly1305HkdfSha256
+    );
+
+    let mut encrypted = FrameBuf::new(&header);
+    assert_eq!(
+        encrypted.write_payload(0, PLAINTEXT).unwrap(),
+        PLAINTEXT.len()
+    );
+    encrypted.encrypt(&SequenceNumber::for_end(0));
+    assert_eq!(encrypted.as_ref(), FRAME);
+
+    let mut decrypted = FrameBuf::new(&parsed);
+    assert_eq!(decrypted.copy_from_encrypted_bytes(&FRAME), FRAME.len());
+    assert_eq!(decrypted.decrypt(0).unwrap().encoded(), 1u64 << 63);
+    assert_eq!(decrypted.payload(), PLAINTEXT);
+}
+
+#[cfg(feature = "chacha20poly1305")]
+#[test]
+fn chacha20poly1305_algorithm_is_authenticated() {
+    let parent_key = mock_parent_key();
+    let aes_header = HeaderBuilder::new(&parent_key, TEST_NONCE).build();
+    let mut tampered_aes = aes_header.bytes().clone();
+    tampered_aes[ALGO_OFFSET] = CryptoAlgorithm::ChaCha20Poly1305HkdfSha256 as u8;
+    assert!(matches!(
+        Header::from_bytes(&parent_key, tampered_aes)
+            .err()
+            .unwrap()
+            .kind(),
+        ErrorKind::Authentication
+    ));
+
+    let header = HeaderBuilder::new(&parent_key, TEST_NONCE)
+        .with_algorithm(CryptoAlgorithm::ChaCha20Poly1305HkdfSha256)
+        .build();
+    let parsed = Header::from_bytes(&parent_key, header.bytes().clone()).unwrap();
+    assert_eq!(
+        parsed.algorithm(),
+        CryptoAlgorithm::ChaCha20Poly1305HkdfSha256
+    );
+
+    let mut tampered = header.bytes().clone();
+    tampered[ALGO_OFFSET] = CryptoAlgorithm::Aes256GcmHkdfSha256 as u8;
+    assert!(matches!(
+        Header::from_bytes(&parent_key, tampered)
+            .err()
+            .unwrap()
+            .kind(),
+        ErrorKind::Authentication
+    ));
+}
+
+#[cfg(not(feature = "chacha20poly1305"))]
+#[test]
+fn chacha20poly1305_header_requires_feature() {
+    let parent_key = mock_parent_key();
+    let header = super::HeaderBytes::from_array(CHACHA20POLY1305_HEADER);
+    assert!(matches!(
+        Header::from_bytes(&parent_key, header)
+            .err()
+            .unwrap()
+            .kind(),
+        ErrorKind::UnsupportedCrypto(1)
+    ));
 }
 
 /// Test access to the values encoded by a Header instance.

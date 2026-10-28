@@ -13,7 +13,8 @@ The Zymic format is fully [documented](./DESIGN.md) in this repo. Its
 core design principles are summarized below.
 
 * **Authenticated Encryption**: All encrypted data is authenticated,
-  providing both confidentiality and integrity.
+  providing both confidentiality and integrity. Support for
+  cryptographic algorithms includes AES-GCM and ChaCha20-Poly1305.
 
 * **Immutability**: Encoded streams are not modified in
   place. Modifications to plaintext require a new encoded stream.

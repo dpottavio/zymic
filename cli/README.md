@@ -125,6 +125,7 @@ Options:
   -o, --output <OUTPUT>  Output file, or '-' to write to stdout
   -k, --key <KEY>        Key file path
   -f, --force            Overwrite files without any check
+  -c, --cipher <CIPHER>  Specify cipher algorithm [default: aes256-gcm] [possible values: aes256-gcm, chacha20-poly1305]
   -h, --help             Print help
 ```
 

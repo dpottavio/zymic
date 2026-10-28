@@ -422,6 +422,68 @@ mod cli_integ_tests {
         assert!(file_compare(&plaintxt_path, &plaintxt_path_2));
     }
 
+    #[test]
+    fn crypt_with_explicit_cipher() {
+        let tmp_dir = TmpDir::new("crypt_with_explicit_cipher");
+        let key_path = cli_new_key(&tmp_dir.path);
+        let plaintext = create_plaintxt(&tmp_dir.path);
+
+        for (cipher, algorithm_id, algorithm_name) in [
+            ("aes256-gcm", 0u16, "aes-256-gcm/hkdf-sha2-256"),
+            ("chacha20-poly1305", 1u16, "chacha20-poly1305/hkdf-sha2-256"),
+        ] {
+            let ciphertext = tmp_dir.path.join(format!("{cipher}.zym"));
+            let output = Command::new(CLI_PATH)
+                .args(["enc", "-k"])
+                .arg(&key_path)
+                .args(["--cipher", cipher, "-o"])
+                .arg(&ciphertext)
+                .arg(&plaintext)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{cipher}: {}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+
+            let bytes = fs::read(&ciphertext).unwrap();
+            assert_eq!(u16::from_le_bytes([bytes[5], bytes[6]]), algorithm_id);
+
+            let info = Command::new(CLI_PATH)
+                .arg("info")
+                .arg(&ciphertext)
+                .output()
+                .unwrap();
+            assert!(info.status.success());
+            assert!(String::from_utf8_lossy(&info.stdout)
+                .contains(&format!("algorithm:\t{algorithm_name}")));
+
+            let authenticated_info = Command::new(CLI_PATH)
+                .args(["info", "--auth", "-k"])
+                .arg(&key_path)
+                .arg(&ciphertext)
+                .output()
+                .unwrap();
+            assert!(authenticated_info.status.success());
+            assert!(String::from_utf8_lossy(&authenticated_info.stdout)
+                .contains(&format!("algorithm:\t{algorithm_name}")));
+
+            let decoded = cli_decrypt(&tmp_dir.path, &key_path, &ciphertext);
+            assert!(file_compare(&plaintext, &decoded));
+        }
+    }
+
+    #[test]
+    fn invalid_cipher_is_rejected() {
+        let output = Command::new(CLI_PATH)
+            .args(["enc", "--cipher", "invalid-cipher"])
+            .output()
+            .unwrap();
+        assert!(!output.status.success());
+        assert!(String::from_utf8_lossy(&output.stderr).contains("invalid value 'invalid-cipher'"));
+    }
+
     /// Test that a file can be encrypted and decrypted using the
     /// default output.
     #[test]

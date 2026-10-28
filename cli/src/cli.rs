@@ -186,6 +186,14 @@ struct DecArgs {
     v1: bool,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum)]
+enum CipherKind {
+    #[value(name = "aes256-gcm")]
+    Aes256Gcm,
+    #[value(name = "chacha20-poly1305")]
+    ChaCha20Poly1305,
+}
+
 #[derive(Args)]
 struct EncArgs {
     /// File to encrypt, or '-' to encrypt from stdin (defaults to stdin)
@@ -199,6 +207,9 @@ struct EncArgs {
     /// Overwrite files without any check
     #[arg(short, long)]
     force: bool,
+    /// Specify cipher algorithm.
+    #[arg(short, long, default_value = "aes256-gcm")]
+    cipher: CipherKind,
 }
 
 #[derive(Args)]
@@ -489,10 +500,10 @@ fn print_header_info(bytes: &HeaderBytes) {
     let parent_key_id = &bytes[PARENT_KEY_ID_OFFSET..PARENT_KEY_ID_OFFSET + ParentKeyId::LEN];
 
     println!("version:\t{}", bytes[VERSION_OFFSET]);
-    if algorithm == CryptoAlgorithm::Aes256GcmHkdfSha256 as u16 {
-        println!("algorithm:\t{}", CryptoAlgorithm::Aes256GcmHkdfSha256);
-    } else {
-        println!("algorithm:\t{algorithm}");
+    print!("algorithm:\t");
+    match CryptoAlgorithm::try_from(algorithm) {
+        Ok(algo_kind) => println!("{algo_kind}"),
+        Err(_) => println!("{algorithm}"),
     }
     if let Some(frame_len) = 1usize.checked_shl(frame_len.into()) {
         println!("frame-length:\t{frame_len}");
@@ -654,10 +665,16 @@ pub fn handle_input() -> Result<(), Error> {
             let key_file: KeyFile = serde_json::from_reader(file)?;
             let parent_key = unwrap_key_file(&key_file)?;
 
+            let algo = match args.cipher {
+                CipherKind::Aes256Gcm => CryptoAlgorithm::Aes256GcmHkdfSha256,
+                CipherKind::ChaCha20Poly1305 => CryptoAlgorithm::ChaCha20Poly1305HkdfSha256,
+            };
+
             let io_args = enc_args_to_io(args.file, args.output, args.force)?;
             let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
             let header = HeaderBuilder::new(&parent_key, nonce)
                 .with_frame_len(FrameLength::Len64KiB)
+                .with_algorithm(algo)
                 .build();
 
             let mut writer = ZymicWriter::from_header(io_args.output, header)?;

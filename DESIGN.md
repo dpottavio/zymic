@@ -110,14 +110,20 @@ with version 1.
 ### Algorithm
 An unsigned integer specifying the combination of AEAD cipher and Data
 Key derivation algorithm in use. The Algorithm field defines the
-following value:
+following values:
 
-| Value | AEAD        | Data Key Derivation | AEAD Nonce Bytes | Tag Bytes |
-|-------|-------------|---------------------|------------------|-----------|
-|   0   | AES-256-GCM | HKDF-SHA-256        |        12        |     16    |
+| Value |       AEAD        | Data Key Derivation | AEAD Nonce Bytes | Tag Bytes |
+|-------|-------------------|---------------------|------------------|-----------|
+|   0   | AES-256-GCM       | HKDF-SHA-256        |        12        |     16    |
+|   1   | CHACHA20-POLY1305 | HKDF-SHA-256        |        12        |     16    |
 
-Algorithm `0` uses AES-256-GCM as specified by [NIST SP
-800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf).
+* Algorithm `0` uses AES-256-GCM as specified by [NIST SP
+  800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf). Implementations
+  MUST support this algorithm.
+
+* Algorithm `1` uses CHACHA20-POLY1305 as specified by
+  [RFC-8439](https://www.rfc-editor.org/info/rfc8439/). Implementations
+  SHOULD support this algorithm.
 
 ### Frame Length
 Specifies the maximum Frame size as a power of two, encoded as an
@@ -230,9 +236,9 @@ The Frame Index MUST NOT wrap under the same Data Key. If another
 Frame would require a Frame Index of `2^63`, the encoder MUST fail
 and MUST NOT emit any additional Frames under that Data Key.
 
-#### AES-GCM IV Construction
+#### AEAD IV Construction
 
-For Algorithm `0`, the 12 byte (96-bit) AEAD Nonce MUST use the
+For AEAD IV construction, the 12 byte (96-bit) AEAD Nonce MUST use the
 following layout, with offsets measured from the start of the Nonce:
 
 | Bit Offset | Field           | Width (bits) | Encoding      |
