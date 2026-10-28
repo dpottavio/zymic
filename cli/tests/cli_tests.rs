@@ -638,7 +638,7 @@ mod cli_integ_tests {
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session.exp_string("version:\t2").unwrap();
         session
-            .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
+            .exp_string("algorithm:\taes-256-gcm/hkdf-sha2-256")
             .unwrap();
         session.exp_string("frame-length:\t65536").unwrap();
         session.exp_string("parent-key-id:\t").unwrap();
@@ -664,7 +664,7 @@ mod cli_integ_tests {
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
         session.exp_string("version:\t2").unwrap();
         session
-            .exp_string("algorithm:\tAES-256-GCM/HKDF-SHA-256")
+            .exp_string("algorithm:\taes-256-gcm/hkdf-sha2-256")
             .unwrap();
         session.exp_string("frame-length:\t65536").unwrap();
         session.exp_string("parent-key-id:\t").unwrap();

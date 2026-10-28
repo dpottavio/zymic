@@ -18,8 +18,8 @@ use zeroize::Zeroizing;
 use zymic_core::{
     key::{ParentKey, ParentKeyId, ParentKeySecret},
     stream::{
-        CryptoAlgorithm, FrameLength, Header, HeaderBytes, HeaderNonce, ZymicReaderBuilder,
-        ZymicWriter,
+        CryptoAlgorithm, FrameLength, Header, HeaderBuilder, HeaderBytes, HeaderNonce,
+        ZymicReaderBuilder, ZymicWriter,
     },
 };
 
@@ -656,13 +656,11 @@ pub fn handle_input() -> Result<(), Error> {
 
             let io_args = enc_args_to_io(args.file, args.output, args.force)?;
             let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+            let header = HeaderBuilder::new(&parent_key, nonce)
+                .with_frame_len(FrameLength::Len64KiB)
+                .build();
 
-            let mut writer = ZymicWriter::new_with_frame_len(
-                io_args.output,
-                &parent_key,
-                nonce,
-                FrameLength::Len64KiB,
-            )?;
+            let mut writer = ZymicWriter::from_header(io_args.output, header)?;
             let mut buf_reader = io::BufReader::new(io_args.input);
             io::copy(&mut buf_reader, &mut writer)?;
             writer.finish()?;

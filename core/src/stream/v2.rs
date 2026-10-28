@@ -66,14 +66,7 @@ use crate::{
     error::{Error, ErrorKind},
     key::{ParentKey, ParentKeyId},
 };
-use aes_gcm::{
-    aead::AeadInOut,
-    aes::{cipher::consts::U12, Aes256},
-    AesGcm, KeyInit as AesKeyInit, Nonce as AesNonce, Tag,
-};
 use core::{fmt, ops::Range};
-use hkdf::Hkdf;
-use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
 #[cfg(feature = "std")]
@@ -82,11 +75,12 @@ use std::io::{Read, Seek, SeekFrom, Write};
 #[cfg(feature = "zeroize")]
 use zeroize::Zeroize;
 
+mod crypto;
+pub use crypto::CryptoAlgorithm;
+use crypto::{AeadNonce, Cipher, DataKey, HeaderMac, Tag};
+
 /// Header nonce byte buffer.
 pub type HeaderNonce = ByteArray<16>;
-
-/// Header MAC byte buffer
-type HeaderMac = ByteArray<32>;
 
 /// Length of the header in bytes.
 const HEADER_LEN: usize = MAGIC_NUM_LEN
@@ -181,9 +175,6 @@ const FRAME_TAG_LEN: usize = 16;
 /// Total length in bytes of all non-payload frame fields.
 const FRAME_META_LEN: usize = FRAME_TAG_LEN + SEQ_NUM_LEN;
 
-/// AES-256-GCM nonce length.
-type FrameNonceLen = U12;
-
 // Frame field offsets.
 
 /// frame sequence number field offset
@@ -192,36 +183,11 @@ const SEQ_NUM_OFFSET: usize = 0;
 /// frame payload field offset
 const PAYLOAD_OFFSET: usize = SEQ_NUM_OFFSET + SEQ_NUM_LEN;
 
-/// HKDF expand label for the header MAC.
-const HEADER_MAC_KDF_LABEL: &[u8] = b"mac";
-
-/// HKDF expand label for the data key.
-const DATA_KEY_KDF_LABEL: &[u8] = b"key";
-
 /// header magic number value
 const MAGIC_NUM: u32 = 0x6d797a2e;
 
 /// current format version
 const VERSION: u8 = 2;
-
-// AES-256-GCM using a 12-byte nonce.
-type Aes256Gcm = AesGcm<Aes256, FrameNonceLen>;
-
-#[non_exhaustive]
-#[repr(u16)]
-#[derive(Debug, PartialEq, Clone, Copy)]
-pub enum CryptoAlgorithm {
-    /// AES-256-GCM using HKDF-SHA2-256 for data key derivation
-    Aes256GcmHkdfSha256 = 0,
-}
-
-impl fmt::Display for CryptoAlgorithm {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        match self {
-            Self::Aes256GcmHkdfSha256 => write!(f, "AES-256-GCM/HKDF-SHA-256"),
-        }
-    }
-}
 
 /// Valid frame lengths.
 ///
@@ -250,8 +216,16 @@ pub enum FrameLength {
 #[derive(PartialEq)]
 pub struct Header {
     frame_len: FrameLength,
-    data_key: aes_gcm::Key<Aes256Gcm>,
+    data_key: DataKey,
+    algo: CryptoAlgorithm,
     bytes: HeaderBytes,
+}
+
+pub struct HeaderBuilder<'a> {
+    parent_key: &'a ParentKey,
+    nonce: HeaderNonce,
+    algo: CryptoAlgorithm,
+    frame_len: FrameLength,
 }
 
 /// The 64-bit Sequence Number value comprised of a Frame Index field,
@@ -335,7 +309,7 @@ pub struct SequenceNumber {
 /// # fn main() -> Result<(), zymic_core::Error> {
 /// use zymic_core::{
 ///     key::ParentKey,
-///     stream::{FrameBuf, SequenceNumber, Header, HeaderNonce},
+///     stream::{FrameBuf, SequenceNumber, HeaderBuilder, HeaderNonce},
 /// };
 /// #
 /// # {
@@ -344,7 +318,7 @@ pub struct SequenceNumber {
 /// // Build header/keying material per your application.
 /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
 /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
-/// let header = Header::new(&parent_key, nonce);
+/// let header = HeaderBuilder::new(&parent_key, nonce).build();
 ///
 /// // Prepare a frame and encrypt the payload.
 /// let mut fb = FrameBuf::new(&header);
@@ -401,7 +375,7 @@ pub struct FrameBuf {
     payload_len: usize,
     /// Cipher used to encrypt and decrypt the payload section of the
     /// frame.
-    cipher: Aes256Gcm,
+    cipher: Cipher,
 }
 
 /// Decrypts and authenticates frames from an existing Zymic stream.
@@ -469,13 +443,14 @@ pub struct ZymicReaderBuilder<'a> {
 /// use std::io::copy;
 /// use zymic_core::{
 ///     key::ParentKey,
-///     stream::{HeaderNonce, ZymicWriter},
+///     stream::{HeaderBuilder, HeaderNonce, ZymicWriter},
 /// };
 ///
 /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
 /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
+/// let header = HeaderBuilder::new(&parent_key, nonce).build();
 /// let mut plaintext = &b"example"[..];
-/// let mut writer = ZymicWriter::new(Vec::new(), &parent_key, nonce)?;
+/// let mut writer = ZymicWriter::from_header(Vec::new(), header)?;
 ///
 /// // The header has already been written to the output. It can also be
 /// // copied to a backup location.
@@ -553,27 +528,11 @@ struct StreamCore<T> {
     state: StreamState,
 }
 
-/// Derive and return a stream header message digest and data key.
-fn derive_data_key(parent_key: &ParentKey, info: &[u8]) -> (HeaderMac, aes_gcm::Key<Aes256>) {
-    let hkdf =
-        Hkdf::<Sha256>::from_prk(parent_key.secret().as_bytes()).expect("valid HKDF PRK length");
-
-    let mut header_mac = HeaderMac::default();
-    hkdf.expand_multi_info(&[HEADER_MAC_KDF_LABEL, info], header_mac.as_mut())
-        .expect("HKDF header MAC expansion");
-
-    let mut data_key = aes_gcm::Key::<Aes256Gcm>::default();
-    hkdf.expand_multi_info(&[DATA_KEY_KDF_LABEL, info], &mut data_key)
-        .expect("HKDF data key expansion");
-
-    (header_mac, data_key)
-}
-
 /// Construct an algorithm-sized AEAD nonce from a complete serialized Frame
 /// Sequence Number, including the End Frame flag. The Sequence Number is
 /// encoded as an unsigned little-endian integer after a 32-bit zero fixed field.
-fn frame_nonce(seq_num: [u8; SEQ_NUM_LEN]) -> AesNonce<FrameNonceLen> {
-    let mut nonce = AesNonce::<FrameNonceLen>::default();
+fn frame_nonce(seq_num: [u8; SEQ_NUM_LEN]) -> AeadNonce {
+    let mut nonce = AeadNonce::default();
     nonce[4..4 + SEQ_NUM_LEN].copy_from_slice(&seq_num);
     nonce
 }
@@ -638,8 +597,6 @@ impl FrameBuf {
     pub fn new(header: &Header) -> Self {
         let frame_len = header.frame_len.as_usize();
         let max_payload_len = frame_len - FRAME_META_LEN;
-        let cipher = AesKeyInit::new(&header.data_key);
-
         Self {
             buf: ByteArray::default(),
             buf_pos: 0,
@@ -647,7 +604,7 @@ impl FrameBuf {
             max_payload_len,
             max_payload_pos: PAYLOAD_OFFSET + max_payload_len,
             payload_len: 0,
-            cipher,
+            cipher: Cipher::from_algorithm(header.algo, &header.data_key),
         }
     }
 
@@ -685,11 +642,11 @@ impl FrameBuf {
     /// capacity succeeds with a partial count; retain the rest for another frame.
     ///
     /// ```rust
-    /// # use zymic_core::{key::ParentKey, stream::{FrameBuf, Header, HeaderNonce}};
+    /// # use zymic_core::{key::ParentKey, stream::{FrameBuf, HeaderBuilder, HeaderNonce}};
     /// # fn main() -> Result<(), zymic_core::Error> {
     /// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
     /// # let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
-    /// # let header = Header::new(&parent_key, nonce);
+    /// # let header = HeaderBuilder::new(&parent_key, nonce).build();
     /// let mut frame = FrameBuf::new(&header);
     /// assert_eq!(frame.write_payload(0, b"hello")?, 5);
     /// let offset = frame.payload().len();
@@ -804,8 +761,7 @@ impl FrameBuf {
 
         let tag = self
             .cipher
-            .encrypt_inout_detached(&nonce, &[], (&mut payload[..self.payload_len]).into())
-            .expect("buffer of sufficient size");
+            .encrypt_inplace(&nonce, &mut payload[..self.payload_len]);
 
         let tag_offset = SEQ_NUM_LEN + self.payload_len;
         self.buf[tag_offset..tag_offset + FRAME_TAG_LEN].copy_from_slice(&tag);
@@ -852,9 +808,7 @@ impl FrameBuf {
         let tag = Tag::try_from(&mac[..FRAME_TAG_LEN]).expect("tag should be 16 bytes");
         let nonce = frame_nonce(seq_num_bytes);
 
-        self.cipher
-            .decrypt_inout_detached(&nonce, &[], payload.into(), &tag)
-            .map_err(|_| Error::new(ErrorKind::CipherDecrypt))?;
+        self.cipher.decrypt_inplace(&nonce, payload, &tag)?;
 
         if frame_idx != seq_num.frame_idx() {
             return Err(Error::new(ErrorKind::UnexpectedSeqNum(
@@ -934,12 +888,12 @@ impl FrameBuf {
     /// ```rust
     /// # use zymic_core::{
     /// #     key::ParentKey,
-    /// #     stream::{FrameBuf, Header, HeaderNonce, SequenceNumber},
+    /// #     stream::{FrameBuf, HeaderBuilder, HeaderNonce, SequenceNumber},
     /// # };
     /// # fn main() -> Result<(), zymic_core::Error> {
     /// # let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
     /// # let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
-    /// # let header = Header::new(&parent_key, nonce);
+    /// # let header = HeaderBuilder::new(&parent_key, nonce).build();
     /// # let mut encrypted = FrameBuf::new(&header);
     /// # encrypted.write_payload(0, b"example")?;
     /// # encrypted.encrypt(&SequenceNumber::for_end(0));
@@ -1053,18 +1007,15 @@ impl core::ops::Deref for FrameBuf {
 impl Header {
     /// Create a stream header with the default frame length.
     ///
-    #[cfg_attr(
-        feature = "std",
-        doc = "For streaming encryption, prefer [`ZymicWriter::new`]."
-    )]
-    ///
     /// # Security
     ///
     /// The nonce must be unique for every stream encrypted under the same
     /// parent key. Generate it using a cryptographically secure random source.
     /// Reusing the same parent key and nonce to encrypt different frame
     /// sequences compromises confidentiality.
+    #[deprecated(since = "1.1.0", note = "use `HeaderBuilder` instead")]
     pub fn new(parent_key: &ParentKey, nonce: HeaderNonce) -> Self {
+        #[allow(deprecated)]
         Self::new_with_frame_len(parent_key, nonce, FrameLength::default())
     }
 
@@ -1076,6 +1027,7 @@ impl Header {
     /// parent key. Generate it using a cryptographically secure random source.
     /// Reusing the same parent key and nonce to encrypt different frame
     /// sequences compromises confidentiality.
+    #[deprecated(since = "1.1.0", note = "use `HeaderBuilder` instead")]
     pub fn new_with_frame_len(
         parent_key: &ParentKey,
         nonce: HeaderNonce,
@@ -1086,7 +1038,7 @@ impl Header {
         let mut cur = ByteCursorMut::new(bytes);
         cur.push_u32_le(MAGIC_NUM);
         cur.push_u8(VERSION);
-        cur.push_u16_le(CryptoAlgorithm::Aes256GcmHkdfSha256 as u16);
+        cur.push_u16_le(CryptoAlgorithm::default() as u16);
         cur.push_u8(frame_len.into());
         cur.push_bytes(&[0u8; RESERVED_LEN]);
         cur.push_bytes(&nonce);
@@ -1095,12 +1047,13 @@ impl Header {
 
         let info = &bytes[HKDF_INFO_RANGE];
 
-        let (header_mac, data_key) = derive_data_key(parent_key, info);
+        let (header_mac, data_key) = crypto::derive_data_key(parent_key, info);
         bytes.as_mut()[HEADER_MAC_OFFSET..].copy_from_slice(&header_mac);
 
         Self {
             frame_len,
             data_key,
+            algo: Default::default(),
             bytes,
         }
     }
@@ -1113,12 +1066,6 @@ impl Header {
     /// containing the derived Data Key and associated
     /// parameters.
     ///
-    #[cfg_attr(
-        feature = "std",
-        doc = "Serialized header bytes may be reused by [`ZymicReaderBuilder`]
-instances; the [`ZymicWriter`] API does not accept existing headers for encryption.
-"
-    )]
     /// # Errors
     ///
     /// Returns an [`Error`] if any of the following conditions are met:
@@ -1138,11 +1085,11 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
     /// Modifying the stored authentication code causes validation to fail.
     ///
     /// ```rust
-    /// # use zymic_core::{key::ParentKey, stream::{Header, HeaderBytes, HeaderNonce}};
+    /// # use zymic_core::{key::ParentKey, stream::{Header, HeaderBuilder, HeaderBytes, HeaderNonce}};
     /// # fn main() -> Result<(), zymic_core::Error> {
     /// let parent_key = ParentKey::try_from_fill(getrandom::fill)?;
     /// let nonce = HeaderNonce::try_from_fill(getrandom::fill)?;
-    /// let original = Header::new(&parent_key, nonce);
+    /// let original = HeaderBuilder::new(&parent_key, nonce).build();
     /// let serialized = original.bytes().clone();
     ///
     /// let decoded = Header::from_bytes(&parent_key, serialized.clone())?;
@@ -1171,10 +1118,8 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
         if version != VERSION {
             return Err(Error::new(ErrorKind::UnsupportedVersion(version)));
         }
-        let algo = byte_buf.get_u16_le();
-        if algo != CryptoAlgorithm::Aes256GcmHkdfSha256 as u16 {
-            return Err(Error::new(ErrorKind::UnsupportedCrypto(algo)));
-        }
+        let algo_num = byte_buf.get_u16_le();
+        let algo = CryptoAlgorithm::try_from(algo_num)?;
         if &bytes[HEADER_KEY_ID_RANGE] != parent_key.id().as_slice() {
             return Err(Error::new(ErrorKind::ParentKeyIdMismatch));
         }
@@ -1183,7 +1128,7 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
         let info = &bytes.as_slice()[HKDF_INFO_RANGE];
         let expected_mac = &bytes.as_slice()[HEADER_MAC_RANGE];
 
-        let (header_mac, data_key) = derive_data_key(parent_key, info);
+        let (header_mac, data_key) = crypto::derive_data_key(parent_key, info);
 
         if header_mac.as_ref().ct_eq(expected_mac).unwrap_u8() != 1 {
             return Err(Error::new(ErrorKind::Authentication));
@@ -1192,6 +1137,7 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
         Ok(Self {
             frame_len,
             data_key,
+            algo,
             bytes,
         })
     }
@@ -1203,7 +1149,7 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
 
     /// Return the cryptographic algorithm encoded by this header.
     pub fn algorithm(&self) -> CryptoAlgorithm {
-        CryptoAlgorithm::Aes256GcmHkdfSha256
+        self.algo
     }
 
     /// Return the frame length encoded by this header.
@@ -1235,6 +1181,61 @@ instances; the [`ZymicWriter`] API does not accept existing headers for encrypti
 impl Drop for Header {
     fn drop(&mut self) {
         self.data_key.zeroize();
+    }
+}
+
+impl<'a> HeaderBuilder<'a> {
+    /// Create a stream header with the default frame length.
+    ///
+    /// # Security
+    ///
+    /// The nonce must be unique for every stream encrypted under the same
+    /// parent key. Generate it using a cryptographically secure random source.
+    /// Reusing the same parent key and nonce to encrypt different frame
+    /// sequences compromises confidentiality.
+    pub fn new(parent_key: &'a ParentKey, nonce: HeaderNonce) -> Self {
+        Self {
+            parent_key,
+            nonce,
+            algo: Default::default(),
+            frame_len: Default::default(),
+        }
+    }
+
+    pub fn with_frame_len(mut self, frame_len: FrameLength) -> Self {
+        self.frame_len = frame_len;
+        self
+    }
+
+    pub fn with_algorithm(mut self, algo: CryptoAlgorithm) -> Self {
+        self.algo = algo;
+        self
+    }
+
+    pub fn build(self) -> Header {
+        // Encode the binary header fields for the stream header.
+        let bytes = HeaderBytes::default();
+        let mut cur = ByteCursorMut::new(bytes);
+        cur.push_u32_le(MAGIC_NUM);
+        cur.push_u8(VERSION);
+        cur.push_u16_le(self.algo as u16);
+        cur.push_u8(self.frame_len.into());
+        cur.push_bytes(&[0u8; RESERVED_LEN]);
+        cur.push_bytes(&self.nonce);
+        cur.push_bytes(self.parent_key.id());
+        let mut bytes = cur.into_inner();
+
+        let info = &bytes[HKDF_INFO_RANGE];
+
+        let (header_mac, data_key) = crypto::derive_data_key(self.parent_key, info);
+        bytes.as_mut()[HEADER_MAC_OFFSET..].copy_from_slice(&header_mac);
+
+        Header {
+            frame_len: self.frame_len,
+            data_key,
+            algo: self.algo,
+            bytes,
+        }
     }
 }
 
@@ -1723,7 +1724,9 @@ impl<T: Write> ZymicWriter<T> {
     /// # Errors
     ///
     /// Returns an error if the header cannot be written to `inner`.
+    #[deprecated(since = "1.1.0", note = "use `ZymicWriter::from_header` instead")]
     pub fn new(inner: T, parent_key: &ParentKey, nonce: HeaderNonce) -> Result<Self, Error> {
+        #[allow(deprecated)]
         Self::new_with_frame_len(inner, parent_key, nonce, FrameLength::default())
     }
 
@@ -1739,13 +1742,36 @@ impl<T: Write> ZymicWriter<T> {
     /// # Errors
     ///
     /// Returns an error if the header cannot be written to `inner`.
+    #[deprecated(since = "1.1.0", note = "use `ZymicWriter::from_header` instead")]
     pub fn new_with_frame_len(
         mut inner: T,
         parent_key: &ParentKey,
         nonce: HeaderNonce,
         frame_len: FrameLength,
     ) -> Result<Self, Error> {
-        let header = Header::new_with_frame_len(parent_key, nonce, frame_len);
+        let header = HeaderBuilder::new(parent_key, nonce)
+            .with_frame_len(frame_len)
+            .build();
+        inner.write_all(header.bytes())?;
+        let core = StreamCore::new(inner, &header);
+        Ok(Self { header, core })
+    }
+
+    /// Create a writer from a fresh header and write it to `inner`.
+    ///
+    /// # Security
+    ///
+    /// The header must not have been used to encrypt another stream. Build it
+    /// with [`HeaderBuilder`] and a unique nonce generated by a
+    /// cryptographically secure random source. Do not use a header recovered
+    /// from an existing stream with [`Header::from_bytes`]: this writer starts
+    /// frame numbering at zero, so reusing that header repeats the Data Key
+    /// and AEAD nonces and compromises confidentiality.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the header cannot be written to `inner`.
+    pub fn from_header(mut inner: T, header: Header) -> Result<Self, Error> {
         inner.write_all(header.bytes())?;
         let core = StreamCore::new(inner, &header);
         Ok(Self { header, core })
