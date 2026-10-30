@@ -114,8 +114,8 @@ following values:
 
 | Value |       AEAD        | Data Key Derivation | AEAD Nonce Bytes | Tag Bytes |
 |-------|-------------------|---------------------|------------------|-----------|
-|   0   | AES-256-GCM       | HKDF-SHA-256        |        12        |     16    |
-|   1   | CHACHA20-POLY1305 | HKDF-SHA-256        |        12        |     16    |
+|   0   | AES-256-GCM       | HKDF-SHA2-256       |        12        |     16    |
+|   1   | CHACHA20-POLY1305 | HKDF-SHA2-256       |        12        |     16    |
 
 * Algorithm `0` uses AES-256-GCM as specified by [NIST SP
   800-38D](https://nvlpubs.nist.gov/nistpubs/Legacy/SP/nistspecialpublication800-38d.pdf). Implementations
