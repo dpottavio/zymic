@@ -26,12 +26,7 @@ serde_json = {version = "1.0", features = ["alloc", "std"], default-features = f
 serde_repr = {version = "0.1", default-features = false}
 tempfile = "3.27"
 zeroize = { version = "1.8", features = ["std"] }
-zymic_core = {
-    path = "../core",
-    version = "1.1",
-    features = ["std", "serde", "v1", "zeroize", "chacha20poly1305"],
-    default-features = false
-}
+zymic_core = {path = "../core", version = "1.1", features = ["std", "serde", "v1", "zeroize", "chacha20poly1305"], default-features = false}
 
 [dev-dependencies]
 rexpect = "0.7.0"
