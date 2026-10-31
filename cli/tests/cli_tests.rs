@@ -428,9 +428,9 @@ mod cli_integ_tests {
         let key_path = cli_new_key(&tmp_dir.path);
         let plaintext = create_plaintxt(&tmp_dir.path);
 
-        for (cipher, algorithm_id, algorithm_name) in [
-            ("aes256-gcm", 0u16, "aes-256-gcm/hkdf-sha2-256"),
-            ("chacha20-poly1305", 1u16, "chacha20-poly1305/hkdf-sha2-256"),
+        for (cipher, algorithm_id, cipher_name) in [
+            ("aes256-gcm", 0u16, "aes-256-gcm"),
+            ("chacha20-poly1305", 1u16, "chacha20-poly1305"),
         ] {
             let ciphertext = tmp_dir.path.join(format!("{cipher}.zym"));
             let output = Command::new(CLI_PATH)
@@ -456,8 +456,9 @@ mod cli_integ_tests {
                 .output()
                 .unwrap();
             assert!(info.status.success());
-            assert!(String::from_utf8_lossy(&info.stdout)
-                .contains(&format!("algorithm:\t{algorithm_name}")));
+            let info_stdout = String::from_utf8_lossy(&info.stdout);
+            assert!(info_stdout.contains(&format!("          cipher: {cipher_name}\n")));
+            assert!(info_stdout.contains("  key derivation: hkdf-sha2-256\n"));
 
             let authenticated_info = Command::new(CLI_PATH)
                 .args(["info", "--auth", "-k"])
@@ -466,8 +467,11 @@ mod cli_integ_tests {
                 .output()
                 .unwrap();
             assert!(authenticated_info.status.success());
-            assert!(String::from_utf8_lossy(&authenticated_info.stdout)
-                .contains(&format!("algorithm:\t{algorithm_name}")));
+            let authenticated_info_stdout = String::from_utf8_lossy(&authenticated_info.stdout);
+            assert!(
+                authenticated_info_stdout.contains(&format!("          cipher: {cipher_name}\n"))
+            );
+            assert!(authenticated_info_stdout.contains("  key derivation: hkdf-sha2-256\n"));
 
             let decoded = cli_decrypt(&tmp_dir.path, &key_path, &ciphertext);
             assert!(file_compare(&plaintext, &decoded));
@@ -698,12 +702,13 @@ mod cli_integ_tests {
         let cmd = format!("{} info {}", CLI_PATH, cipher_txt.display());
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("version:\t2").unwrap();
+        session.exp_string("         version: 2").unwrap();
+        session.exp_string("          cipher: aes-256-gcm").unwrap();
         session
-            .exp_string("algorithm:\taes-256-gcm/hkdf-sha2-256")
+            .exp_string("  key derivation: hkdf-sha2-256")
             .unwrap();
-        session.exp_string("frame-length:\t65536").unwrap();
-        session.exp_string("parent-key-id:\t").unwrap();
+        session.exp_string("    frame-length: 65536").unwrap();
+        session.exp_string("   parent-key-id: ").unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));
@@ -724,12 +729,13 @@ mod cli_integ_tests {
         );
 
         let mut session = spawn(&cmd, Some(SESSION_TIMEOUT_MS)).unwrap();
-        session.exp_string("version:\t2").unwrap();
+        session.exp_string("         version: 2").unwrap();
+        session.exp_string("          cipher: aes-256-gcm").unwrap();
         session
-            .exp_string("algorithm:\taes-256-gcm/hkdf-sha2-256")
+            .exp_string("  key derivation: hkdf-sha2-256")
             .unwrap();
-        session.exp_string("frame-length:\t65536").unwrap();
-        session.exp_string("parent-key-id:\t").unwrap();
+        session.exp_string("    frame-length: 65536").unwrap();
+        session.exp_string("   parent-key-id: ").unwrap();
         session.exp_eof().unwrap();
         let status = session.process_mut().exit().unwrap();
         assert!(matches!(status, WaitStatus::Exited(_, 0)));

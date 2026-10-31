@@ -499,18 +499,27 @@ fn print_header_info(bytes: &HeaderBytes) {
     let frame_len = bytes[FRAME_LEN_OFFSET];
     let parent_key_id = &bytes[PARENT_KEY_ID_OFFSET..PARENT_KEY_ID_OFFSET + ParentKeyId::LEN];
 
-    println!("version:\t{}", bytes[VERSION_OFFSET]);
-    print!("algorithm:\t");
+    println!("{:>16}: {}", "version", bytes[VERSION_OFFSET]);
     match CryptoAlgorithm::try_from(algorithm) {
-        Ok(algo_kind) => println!("{algo_kind}"),
-        Err(_) => println!("{algorithm}"),
+        Ok(CryptoAlgorithm::Aes256GcmHkdfSha256) => {
+            println!("{:>16}: aes-256-gcm", "cipher");
+            println!("{:>16}: hkdf-sha2-256", "key derivation");
+        }
+        Ok(CryptoAlgorithm::ChaCha20Poly1305HkdfSha256) => {
+            println!("{:>16}: chacha20-poly1305", "cipher");
+            println!("{:>16}: hkdf-sha2-256", "key derivation");
+        }
+        Ok(_) | Err(_) => {
+            println!("{:>16}: unknown ({:#04x})", "cipher", algorithm);
+            println!("{:>16}: unknown ({:#04x})", "key derivation", algorithm);
+        }
     }
     if let Some(frame_len) = 1usize.checked_shl(frame_len.into()) {
-        println!("frame-length:\t{frame_len}");
+        println!("{:>16}: {}", "frame-length", frame_len);
     } else {
-        println!("frame-length:\t2^{frame_len}");
+        println!("{:>16}: 2^{}", "frame-length", frame_len);
     }
-    print!("parent-key-id:\t");
+    print!("{:>16}: ", "parent-key-id");
     for (index, byte) in parent_key_id.iter().enumerate() {
         print!("{byte:02x}");
         if index + 1 < parent_key_id.len() {
