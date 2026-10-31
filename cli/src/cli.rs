@@ -4,7 +4,6 @@ use crate::{
     key::{ArgonSetting, KeyFile},
 };
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use indoc::indoc;
 #[cfg(unix)]
 use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::{
@@ -29,8 +28,7 @@ use zymic_core::{
     display_name = env!("CARGO_PKG_NAME"),
     version = concat!(env!("CARGO_PKG_VERSION"), " (", env!("GIT_DESCRIBE"), ")"),
     about = "Simple file encryption tool.",
-    after_help = indoc! {r#"
-Examples:
+    after_help = r#"Examples:
 
 - Create a key file:
   zymic key new
@@ -43,7 +41,7 @@ Examples:
 
 - Display encrypted file information:
   zymic info my_data.txt.zym
-"#})]
+"#)]
 pub struct Cli {
     #[command(subcommand)]
     cmd: Command,
@@ -51,8 +49,7 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    #[command(after_help = indoc! {r#"
-Examples:
+    #[command(after_help = r#"Examples:
 
 - Decrypt a file:
   zymic dec foo.txt.zym
@@ -62,11 +59,10 @@ Examples:
 
 - Decrypt stdin and write to stdout:
   zymic dec < foo.txt.zym > foo.txt                                     
-"#})]
+"#)]
     /// Decrypt data.
     Dec(DecArgs),
-    #[command(after_help = indoc! {r#"
-Examples:
+    #[command(after_help = r#"Examples:
 
 - Encrypt a file
   zymic enc foo.txt
@@ -76,15 +72,14 @@ Examples:
 
 - Encrypt stdin and write to stdout
   zymic enc < foo.txt > foo.txt.zym
-"#})]
+"#)]
     /// Encrypt data.
     Enc(EncArgs),
-    #[command(after_help = indoc! {r#"
-Examples:
+    #[command(after_help = r#"Examples:
 
 - Display encrypted file information:
   zymic info foo.txt.zym
-"#})]
+"#)]
     /// Display encrypted file header information.
     Info(InfoArgs),
     /// Key file sub-commands.
@@ -100,8 +95,7 @@ struct KeyArgs {
 #[derive(Subcommand)]
 enum KeyCommand {
     /// Create a new key file.
-    #[command(after_help = indoc! {r#"
-Examples:
+    #[command(after_help = r#"Examples:
 
 - Create a new key file in ${HOME}/.zymic
   zymic key new
@@ -111,7 +105,7 @@ Examples:
 
 - Create a key file without password protection
   zymic key new --no-password
-"#})]
+"#)]
     New(NewKeyFileArgs),
     /// Display key file metadata information.
     Info(KeyInfoArgs),
@@ -156,13 +150,12 @@ struct NewKeyFileArgs {
     /// Store the key without password protection
     #[arg(long)]
     no_password: bool,
-    #[arg(short, long, help = indoc! {r#"
-Argon2 hash parameter setting. This argument tunes the
+    #[arg(short, long, help = r#"Argon2 hash parameter setting. This argument tunes the
 resources required to compute the Argon2 hash from the
 user-provided password. It's a proof of work step to
 limit the ability of an attacker to mine the user's key
 password.
-"#},
+"#,
     conflicts_with = "no_password",
     default_value_t = ArgonArg::Cpu)]
     argon_config: ArgonArg,
