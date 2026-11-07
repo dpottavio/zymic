@@ -38,22 +38,22 @@ pub type HeaderMac = ByteArray<32>;
 #[repr(u16)]
 #[derive(Debug, PartialEq, Clone, Copy, Default)]
 pub enum CryptoAlgorithm {
-    /// aes-256-gcm using hkdf-sha2-256 for key derivation
+    /// aes-256-gcm using hkdf-sha-256 for key derivation
     #[default]
     Aes256GcmHkdfSha256 = 0,
     #[cfg(feature = "chacha20poly1305")]
     #[cfg_attr(docsrs, doc(cfg(feature = "chacha20poly1305")))]
     /// chacha20-poly1305 ([RFC-8439](https://www.rfc-editor.org/info/rfc8439/)) using
-    /// hkdf-sha2-256 for key derivation
+    /// hkdf-sha-256 for key derivation
     ChaCha20Poly1305HkdfSha256 = 1,
 }
 
 impl fmt::Display for CryptoAlgorithm {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match self {
-            Self::Aes256GcmHkdfSha256 => write!(f, "aes-256-gcm/hkdf-sha2-256"),
+            Self::Aes256GcmHkdfSha256 => write!(f, "aes-256-gcm/hkdf-sha-256"),
             #[cfg(feature = "chacha20poly1305")]
-            Self::ChaCha20Poly1305HkdfSha256 => write!(f, "chacha20-poly1305/hkdf-sha2-256"),
+            Self::ChaCha20Poly1305HkdfSha256 => write!(f, "chacha20-poly1305/hkdf-sha-256"),
         }
     }
 }

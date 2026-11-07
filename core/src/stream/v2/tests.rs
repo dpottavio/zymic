@@ -363,7 +363,7 @@ fn header_getters() {
     assert_eq!(header.algorithm(), CryptoAlgorithm::Aes256GcmHkdfSha256);
     assert_eq!(
         format!("{}", header.algorithm()),
-        "aes-256-gcm/hkdf-sha2-256"
+        "aes-256-gcm/hkdf-sha-256"
     );
     assert_eq!(header.frame_len(), frame_len);
     assert_eq!(header.parent_key_id_bytes(), parent_key.id().as_slice());

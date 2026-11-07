@@ -458,7 +458,7 @@ mod cli_integ_tests {
             assert!(info.status.success());
             let info_stdout = String::from_utf8_lossy(&info.stdout);
             assert!(info_stdout.contains(&format!("          cipher: {cipher_name}\n")));
-            assert!(info_stdout.contains("  key derivation: hkdf-sha2-256\n"));
+            assert!(info_stdout.contains("  key derivation: hkdf-sha-256\n"));
 
             let authenticated_info = Command::new(CLI_PATH)
                 .args(["info", "--auth", "-k"])
@@ -471,7 +471,7 @@ mod cli_integ_tests {
             assert!(
                 authenticated_info_stdout.contains(&format!("          cipher: {cipher_name}\n"))
             );
-            assert!(authenticated_info_stdout.contains("  key derivation: hkdf-sha2-256\n"));
+            assert!(authenticated_info_stdout.contains("  key derivation: hkdf-sha-256\n"));
 
             let decoded = cli_decrypt(&tmp_dir.path, &key_path, &ciphertext);
             assert!(file_compare(&plaintext, &decoded));
@@ -705,7 +705,7 @@ mod cli_integ_tests {
         session.exp_string("         version: 2").unwrap();
         session.exp_string("          cipher: aes-256-gcm").unwrap();
         session
-            .exp_string("  key derivation: hkdf-sha2-256")
+            .exp_string("  key derivation: hkdf-sha-256")
             .unwrap();
         session.exp_string("    frame-length: 65536").unwrap();
         session.exp_string("   parent-key-id: ").unwrap();
@@ -732,7 +732,7 @@ mod cli_integ_tests {
         session.exp_string("         version: 2").unwrap();
         session.exp_string("          cipher: aes-256-gcm").unwrap();
         session
-            .exp_string("  key derivation: hkdf-sha2-256")
+            .exp_string("  key derivation: hkdf-sha-256")
             .unwrap();
         session.exp_string("    frame-length: 65536").unwrap();
         session.exp_string("   parent-key-id: ").unwrap();

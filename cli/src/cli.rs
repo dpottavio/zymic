@@ -496,11 +496,11 @@ fn print_header_info(bytes: &HeaderBytes) {
     match CryptoAlgorithm::try_from(algorithm) {
         Ok(CryptoAlgorithm::Aes256GcmHkdfSha256) => {
             println!("{:>16}: aes-256-gcm", "cipher");
-            println!("{:>16}: hkdf-sha2-256", "key derivation");
+            println!("{:>16}: hkdf-sha-256", "key derivation");
         }
         Ok(CryptoAlgorithm::ChaCha20Poly1305HkdfSha256) => {
             println!("{:>16}: chacha20-poly1305", "cipher");
-            println!("{:>16}: hkdf-sha2-256", "key derivation");
+            println!("{:>16}: hkdf-sha-256", "key derivation");
         }
         Ok(_) | Err(_) => {
             println!("{:>16}: unknown ({:#04x})", "cipher", algorithm);
